@@ -1,0 +1,42 @@
+dash==3.0.4
+dash-bootstrap-components==2.0.3
+plotly==6.0.1
+pandas==2.2.3
+numpy==2.2.4
+SQLAlchemy==2.0.39
+psycopg2-binary==2.9.10
+python-dotenv==1.0.1
+
+
+Project Run Commands:
+
+cd "D:\PROJECT\Cable Flow DashBoard\cable_flow_dashboard"
+
+.\.venv\Scripts\activate
+
+python app.py
+
+
+
+
+
+
+
+
+******* Agar new project ki apni .venv chahiye ********
+
+Updated folder mein:
+
+python -m venv .venv
+
+phir:
+
+.\.venv\Scripts\Activate.ps1
+
+dependencies install:
+
+pip install -r "requirements & Commands.txt"
+
+aur:
+
+python app.py
