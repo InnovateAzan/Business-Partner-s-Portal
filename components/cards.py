@@ -21,7 +21,6 @@ def machine_summary_card(kpis):
     running = int(kpis.get("running", 0) or 0)
     idle = int(kpis.get("idle", 0) or 0)
     halt_stop = int(kpis.get("halt_stop", 0) or 0)
-    stopped = int(kpis.get("stopped", 0) or 0)
 
     return html.Div(
         className="machine-summary-prototype",
@@ -52,8 +51,6 @@ def machine_summary_card(kpis):
                     html.Span([html.Strong(str(idle)), " Idle"], className="machine-summary-idle"),
                     html.Span("|", className="machine-summary-separator"),
                     html.Span([html.Strong(str(halt_stop)), " Halt"], className="machine-summary-halt"),
-                    html.Span("|", className="machine-summary-separator"),
-                    html.Span([html.Strong(str(stopped)), " Stopped"], className="machine-summary-stopped"),
                 ],
             ),
         ],

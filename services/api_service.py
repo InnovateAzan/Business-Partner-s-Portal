@@ -3,6 +3,7 @@ from datetime import datetime, date, timedelta
 
 import pandas as pd
 import psycopg2
+import requests
 
 from services.config import (
     DB_HOST,
@@ -10,6 +11,7 @@ from services.config import (
     DB_NAME,
     DB_USER,
     DB_PASSWORD,
+    PRODUCTION_TARGET_API,
 )
 
 
@@ -27,8 +29,82 @@ def clear_api_cache():
     Call this when Refresh button is clicked.
     """
     fetch_dashboard_metadata.cache_clear()
+    fetch_production_targets.cache_clear()
     _get_event_log_columns.cache_clear()
     _get_job_metadata_source.cache_clear()
+
+
+# ============================================================
+# PRODUCTION TARGET API
+# ============================================================
+
+@lru_cache(maxsize=1)
+def fetch_production_targets():
+    """
+    Fetch real Production Overview values from the configured API.
+
+    Expected response example::
+
+        [
+            {"work_center": "GCF", "target": 0, "actual": 30},
+            {"work_center": "PCF", "target": 0, "actual": 55},
+        ]
+
+    The API is configured through PRODUCTION_TARGET_API in .env.
+    No target or actual value is hardcoded in the dashboard.
+    """
+    if not PRODUCTION_TARGET_API:
+        return []
+
+    try:
+        response = requests.get(
+            PRODUCTION_TARGET_API,
+            timeout=10,
+        )
+        response.raise_for_status()
+
+        payload = response.json()
+        if not isinstance(payload, list):
+            print("Production target API returned a non-list response.")
+            return []
+
+        cleaned = []
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+
+            work_center = str(row.get("work_center") or "").strip()
+
+            try:
+                target = float(row.get("target", 0) or 0)
+            except (TypeError, ValueError):
+                target = 0.0
+
+            try:
+                actual = float(row.get("actual", 0) or 0)
+            except (TypeError, ValueError):
+                actual = 0.0
+
+            cleaned.append(
+                {
+                    "work_center": work_center or "Unknown",
+                    "target": target,
+                    "actual": actual,
+                }
+            )
+
+        return cleaned
+
+    except requests.RequestException as error:
+        print(f"Production target API request error: {error}")
+        return []
+    except ValueError as error:
+        print(f"Production target API JSON error: {error}")
+        return []
+    except Exception as error:
+        print(f"Production target API error: {error}")
+        return []
+
 
 
 # ============================================================
@@ -137,6 +213,24 @@ def _get_job_metadata_source():
             "operation",
             "operation_name",
         ]
+        target_candidates = [
+            "target_tons",
+            "planned_tons",
+            "plan_tons",
+            "planned_tonnage",
+            "target_tonnage",
+            "planned_qty",
+            "plan_qty",
+            "planned_quantity",
+            "target_qty",
+            "target_quantity",
+        ]
+        uom_candidates = [
+            "uom",
+            "uom_code",
+            "unit_of_measure",
+            "primary_uom_code",
+        ]
         join_candidates = ["id", "job_id"]
 
         # Prefer the CableFlow job-workbench table when it exists, then
@@ -173,12 +267,22 @@ def _get_job_metadata_source():
                 (c for c in process_candidates if c in columns),
                 None,
             )
+            target_column = next(
+                (c for c in target_candidates if c in columns),
+                None,
+            )
+            uom_column = next(
+                (c for c in uom_candidates if c in columns),
+                None,
+            )
 
             return {
                 "table": table_name,
                 "join_column": join_column,
                 "department_column": department_column,
                 "process_column": process_column,
+                "target_column": target_column,
+                "uom_column": uom_column,
             }
 
         return None
@@ -382,10 +486,25 @@ def fetch_dashboard_metadata(
                 "0::numeric",
             ),
 
+            # Prefer an explicit tonnage field when event_logs exposes one.
+            next(
+                (
+                    _column_expression(available_columns, name, "actualProductionTons", "NULL::numeric")
+                    for name in [
+                        "actual_production_tons",
+                        "production_tons",
+                        "actual_tons",
+                        "actual_tonnage",
+                        "tonnage",
+                    ]
+                    if name in available_columns
+                ),
+                'NULL::numeric AS "actualProductionTons"',
+            ),
+
             # Job-level metadata is added below when a related job table
             # is available.
-            'CAST(el."machine_id" AS TEXT) AS "machineCode"',
-            '0::numeric AS "plannedQty"',
+            'COALESCE(mm."machine_name"::text, CAST(el."machine_id" AS TEXT)) AS "machineCode"',
         ]
 
         metadata_source = _get_job_metadata_source()
@@ -396,6 +515,8 @@ def fetch_dashboard_metadata(
             join_column = metadata_source["join_column"]
             department_column = metadata_source["department_column"]
             process_column = metadata_source.get("process_column")
+            target_column = metadata_source.get("target_column")
+            uom_column = metadata_source.get("uom_column")
 
             select_columns.append(
                 f"COALESCE(jm.\"{department_column}\"::text, '') AS \"dept\""
@@ -408,6 +529,24 @@ def fetch_dashboard_metadata(
             else:
                 select_columns.append("''::text AS \"processName\"")
 
+            if target_column:
+                select_columns.append(
+                    f"COALESCE(jm.\"{target_column}\"::numeric, 0::numeric) AS \"plannedQty\""
+                )
+                select_columns.append(
+                    f"'{target_column}'::text AS \"plannedQtySource\""
+                )
+            else:
+                select_columns.append('0::numeric AS "plannedQty"')
+                select_columns.append("''::text AS \"plannedQtySource\"")
+
+            if uom_column:
+                select_columns.append(
+                    f"COALESCE(jm.\"{uom_column}\"::text, '') AS \"productionUom\""
+                )
+            else:
+                select_columns.append("''::text AS \"productionUom\"")
+
             join_sql = (
                 f'LEFT JOIN {DB_SCHEMA}."{table_name}" jm '
                 f'ON jm."{join_column}" = el."job_id"'
@@ -416,6 +555,9 @@ def fetch_dashboard_metadata(
             select_columns.extend([
                 "''::text AS \"dept\"",
                 "''::text AS \"processName\"",
+                '0::numeric AS "plannedQty"',
+                "''::text AS \"plannedQtySource\"",
+                "''::text AS \"productionUom\"",
             ])
 
         query = f"""
@@ -423,6 +565,8 @@ def fetch_dashboard_metadata(
                 {", ".join(select_columns)}
 
             FROM {DB_SCHEMA}.{EVENT_LOG_TABLE} el
+            LEFT JOIN {DB_SCHEMA}.job_machines_master mm
+                ON mm.id = el.machine_id
             {join_sql}
 
             WHERE 1 = 1
@@ -486,14 +630,15 @@ def fetch_dashboard_metadata(
             "actualExecutedQty",
             "length",
             "plannedQty",
+            "actualProductionTons",
         ]
 
         for column in numeric_columns:
             if column in df.columns:
-                df[column] = pd.to_numeric(
-                    df[column],
-                    errors="coerce",
-                ).fillna(0)
+                numeric = pd.to_numeric(df[column], errors="coerce")
+                # NULL means the database has no explicit tonnage source; keep
+                # that distinction so the UI can show N/A instead of fake 0 Tons.
+                df[column] = numeric if column == "actualProductionTons" else numeric.fillna(0)
 
         # ----------------------------------------------------
         # Clean text values
@@ -505,6 +650,8 @@ def fetch_dashboard_metadata(
             "processName",
             "machineCode",
             "dept",
+            "plannedQtySource",
+            "productionUom",
         ]
 
         for column in text_columns:

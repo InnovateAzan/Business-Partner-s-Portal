@@ -111,6 +111,71 @@ def stopped_machines_table(df, max_rows=None, table_class="stopped-machine-table
     )
 
 
+
+def _format_idle_since(value):
+    ts = pd.to_datetime(value, errors="coerce", utc=True)
+    if pd.isna(ts):
+        return ""
+    return ts.tz_convert(LOCAL_TZ).strftime("%d %b, %I:%M %p")
+
+
+def _idle_machine_name_cell(value):
+    return html.Span(
+        [
+            html.Span("●", className="idle-machine-dot"),
+            html.Span(_safe_text(value), className="idle-machine-name"),
+        ],
+        className="idle-machine-cell",
+    )
+
+
+def _idle_duration_badge(value):
+    return html.Span(_safe_text(value), className="idle-duration-pill")
+
+
+def idle_machines_table(df, max_rows=None):
+    if df is None or df.empty:
+        return html.Div("No data available", className="empty-state")
+
+    df = df.copy()
+    if max_rows:
+        df = df.head(max_rows)
+
+    columns = [c for c in df.columns if c in {"Machine Name", "Since From", "Duration"}]
+    if not columns:
+        columns = list(df.columns)
+
+    header_map = {
+        "Machine Name": "Machine",
+        "Since From": "Idle Since",
+    }
+
+    def _render_cell(col, value):
+        col_lower = str(col).lower()
+        if col_lower in {"machine name", "machine"}:
+            return _idle_machine_name_cell(value)
+        if col_lower in {"since from", "idle since"}:
+            return html.Span(_format_idle_since(value), className="idle-since-text")
+        if col_lower in {"duration", "idle duration"}:
+            return _idle_duration_badge(value)
+        return _safe_text(value)
+
+    return html.Div(
+        className="table-wrapper compact-table-wrapper idle-table-wrapper",
+        children=[
+            html.Table(
+                className="data-table idle-machine-table",
+                children=[
+                    html.Thead(html.Tr([html.Th(header_map.get(col, col)) for col in columns])),
+                    html.Tbody([
+                        html.Tr([html.Td(_render_cell(col, row[col])) for col in columns])
+                        for _, row in df.iterrows()
+                    ]),
+                ],
+            )
+        ],
+    )
+
 def status_badge(status):
     return html.Span(
         _safe_text(status),

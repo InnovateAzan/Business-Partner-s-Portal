@@ -1,18 +1,20 @@
 import pandas as pd
 
-from services.api_service import fetch_dashboard_metadata, clear_api_cache
+from services.api_service import (
+    fetch_dashboard_metadata,
+    fetch_production_targets,
+    clear_api_cache,
+)
 
 
-YEARLY_PRODUCTION_TARGET_TONS = 3000
-YEARLY_PRODUCTION_TARGET_KM = 1200
+ALLOWED_STATUSES = ["Running", "Idle", "Halt / Stop"]
 
-ALLOWED_STATUSES = ["Running", "Idle", "Stopped", "Halt / Stop"]
-
-# CableFlow event status mapping.
-# 0/100 are terminal/setup-complete style events; they are treated as Stopped
-# until the next machine event changes the state.
+# Current machine-state mapping used by KPI cards and current-machine tables.
+# Business rule: a machine with no active/running job is shown as Idle rather
+# than as a separate Stopped state. Halt / Stop remains a temporary interruption
+# of an active job.
 STATUS_CODE_MAP = {
-    0: "Stopped",
+    0: "Idle",
     1: "Running",
     10: "Running",
     20: "Running",
@@ -20,11 +22,16 @@ STATUS_CODE_MAP = {
     40: "Idle",
     50: "Halt / Stop",
     60: "Halt / Stop",
-    70: "Stopped",
-    80: "Stopped",
-    90: "Stopped",
-    100: "Stopped",
+    70: "Idle",
+    80: "Idle",
+    90: "Idle",
+    100: "Idle",
 }
+
+# Keep the existing historical downtime-event population for the donut chart.
+# This preserves the current reason totals while the current machine KPI view
+# merges the old Stopped state into Idle.
+HALT_STOP_EVENT_CODES = {0, 30, 50, 60, 70, 80, 90, 100}
 
 
 def clear_data_cache():
@@ -61,9 +68,9 @@ def _pretty_process_name(value):
 
 def _normalize_status_code(value):
     try:
-        return STATUS_CODE_MAP.get(int(float(value)), "Stopped")
+        return STATUS_CODE_MAP.get(int(float(value)), "Idle")
     except Exception:
-        return "Stopped"
+        return "Idle"
 
 
 def _safe_numeric(series_or_value):
@@ -76,17 +83,23 @@ def _safe_numeric(series_or_value):
 
 
 def _format_minutes(minutes):
+    """Format minutes as a compact user-friendly duration."""
     try:
         minutes = int(round(float(minutes or 0)))
     except Exception:
         minutes = 0
+
     minutes = max(minutes, 0)
-    hours, mins = divmod(minutes, 60)
-    if hours and mins:
-        return f"{hours}h {mins}m"
-    if hours:
-        return f"{hours}h"
-    return f"{mins}m"
+    days, remainder = divmod(minutes, 1440)
+    hours, mins = divmod(remainder, 60)
+
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours or days:
+        parts.append(f"{hours}h")
+    parts.append(f"{mins}m")
+    return " ".join(parts)
 
 
 def _make_utc_compatible(value):
@@ -111,21 +124,16 @@ def _format_duration_hours(start_time, reference_time=None):
 
 
 def _get_reference_time(df, filters=None):
+    """Use selected range end when present; otherwise use real current UTC time."""
     filters = _normalize_filters(filters)
     end_date = filters.get("end_date")
 
     if end_date:
         end_ts = pd.to_datetime(end_date, errors="coerce", utc=True)
         if pd.notna(end_ts):
-            # Include the full selected day.
             if end_ts.hour == 0 and end_ts.minute == 0 and end_ts.second == 0:
                 end_ts = end_ts + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
             return end_ts
-
-    if df is not None and not df.empty and "Status From" in df.columns:
-        dates = pd.to_datetime(df["Status From"], errors="coerce", utc=True).dropna()
-        if not dates.empty:
-            return dates.max()
 
     return pd.Timestamp.now(tz="UTC")
 
@@ -166,6 +174,9 @@ def _api_dataframe(filters=None, apply_dates=True):
             "actualExecutedQty": "Actual Qty",
             "length": "Length",
             "plannedQty": "Planned Qty",
+            "plannedQtySource": "Planned Qty Source",
+            "productionUom": "Production UOM",
+            "actualProductionTons": "Production Tons",
         }
     )
 
@@ -184,6 +195,9 @@ def _api_dataframe(filters=None, apply_dates=True):
         "Actual Qty": 0,
         "Length": 0,
         "Planned Qty": 0,
+        "Planned Qty Source": "",
+        "Production UOM": "",
+        "Production Tons": pd.NA,
     }
     for col, default in defaults.items():
         if col not in df.columns:
@@ -196,20 +210,24 @@ def _api_dataframe(filters=None, apply_dates=True):
 
     for col in ["Actual Qty", "Length", "Planned Qty", "Machine ID", "Job ID", "Status Code"]:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    df["Production Tons"] = pd.to_numeric(df["Production Tons"], errors="coerce")
 
     # Do not allow machine id 0/null placeholders to become real machines.
     df = df[df["Machine ID"] > 0].copy()
     if df.empty:
         return pd.DataFrame()
 
-    # If API does not provide a machine code yet, use a readable fallback.
+    # Machine Name comes from cableflow.job_machines_master through api_service.
+    # Keep the numeric ID only as a defensive fallback if a master row is missing.
     machine_name = df["Machine Name"].fillna("").astype(str).str.strip()
-    fallback_name = "Machine " + df["Machine ID"].astype(int).astype(str)
+    fallback_name = df["Machine ID"].astype(int).astype(str)
     df["Machine Name"] = machine_name.where(machine_name.ne(""), fallback_name)
 
     df["Process Name"] = df["Process Name"].fillna("").astype(str)
     df["Machine Type"] = df["Process Name"].apply(_pretty_process_name)
     df["Department"] = df["Department"].fillna("").astype(str).str.strip()
+    df["Planned Qty Source"] = df["Planned Qty Source"].fillna("").astype(str).str.strip()
+    df["Production UOM"] = df["Production UOM"].fillna("").astype(str).str.strip()
     df["Status"] = df["Status Code"].apply(_normalize_status_code)
     df["Reason"] = df["Reason"].fillna("Unspecified").astype(str).replace("", "Unspecified")
     df["Interface Log"] = df["Interface Log"].fillna("").astype(str)
@@ -288,11 +306,13 @@ def _latest_machine_rows(filters=None):
 def _add_status_duration(df, filters=None):
     if df is None or df.empty:
         return df
+
     df = df.copy()
     reference_time = _get_reference_time(df, filters)
-    df["Duration"] = df["Status From"].apply(
-        lambda value: _format_duration_hours(value, reference_time)
-    )
+    starts = pd.to_datetime(df["Status From"], errors="coerce", utc=True)
+    df["Duration Minutes"] = ((reference_time - starts).dt.total_seconds() / 60).clip(lower=0)
+    df["Duration Minutes"] = pd.to_numeric(df["Duration Minutes"], errors="coerce").fillna(0)
+    df["Duration"] = df["Duration Minutes"].apply(_format_minutes)
     return df
 
 
@@ -333,7 +353,11 @@ def downtime_events(filters=None):
     df = _api_dataframe(filters, apply_dates=True)
     if df.empty:
         return pd.DataFrame()
-    df = df[df["Status"].isin(["Stopped", "Halt / Stop"])].copy()
+
+    # Historical interruption events used by the Halt / Stop downtime chart.
+    # Use raw event codes so merging current Stopped machines into Idle does not
+    # erase the existing downtime-reason history.
+    df = df[df["Status Code"].astype(int).isin(HALT_STOP_EVENT_CODES)].copy()
     return _calculate_event_durations(df, filters)
 
 
@@ -439,9 +463,9 @@ def get_kpis(filters=None):
 
     status_counts = machine_df["Status"].value_counts()
     running = int(status_counts.get("Running", 0))
-    stopped = int(status_counts.get("Stopped", 0))
     idle = int(status_counts.get("Idle", 0))
     halt_stop = int(status_counts.get("Halt / Stop", 0))
+    stopped = 0  # kept only for backwards compatibility with older UI code
 
     # OEE remains 0 until planned quantity is populated by the API query.
     actual_sum = _safe_numeric(machine_df["Actual Qty"]).sum()
@@ -470,7 +494,7 @@ def get_kpis(filters=None):
         "idle": idle,
         "halt_stop": halt_stop,
         "running_pct": round(running / total * 100, 1),
-        "stopped_pct": round(stopped / total * 100, 1),
+        "stopped_pct": 0,
         "idle_pct": round(idle / total * 100, 1),
         "halt_stop_pct": round(halt_stop / total * 100, 1),
         "oee": oee,
@@ -483,9 +507,17 @@ def get_kpis(filters=None):
     return result
 
 
-def machine_status_trend(filters=None):
-    df = _api_dataframe(filters, apply_dates=True)
+def machine_status_trend(filters=None, days=7):
+    """
+    Build a true daily status snapshot. For each day we take the latest event
+    at or before that day's end for every machine, then calculate the status
+    distribution. This avoids duplicate-event distortion and keeps daily
+    percentages aligned to the machine population.
+    """
+    filters = _normalize_filters(filters)
+    df = _api_dataframe(filters, apply_dates=False)
     empty = pd.DataFrame(columns=["Date", *ALLOWED_STATUSES])
+
     if df.empty or "Status From" not in df.columns:
         return empty
 
@@ -493,34 +525,39 @@ def machine_status_trend(filters=None):
     if df.empty:
         return empty
 
-    # For each day, take each machine's final state on that day.
-    df["DateOnly"] = df["Status From"].dt.floor("D")
-    df = df.sort_values(["DateOnly", "Machine ID", "Status From"])
-    df = df.drop_duplicates(subset=["DateOnly", "Machine ID"], keep="last")
+    end_day = pd.Timestamp.now(tz="UTC").floor("D")
+    if filters.get("end_date"):
+        selected_end = pd.to_datetime(filters["end_date"], errors="coerce", utc=True)
+        if pd.notna(selected_end):
+            end_day = selected_end.floor("D")
 
-    trend = (
-        df.groupby(["DateOnly", "Status"])
-        .size()
-        .reset_index(name="Count")
-        .pivot(index="DateOnly", columns="Status", values="Count")
-        .fillna(0)
-        .reset_index()
-    )
+    start_day = end_day - pd.Timedelta(days=max(int(days) - 1, 0))
+    if filters.get("start_date"):
+        selected_start = pd.to_datetime(filters["start_date"], errors="coerce", utc=True)
+        if pd.notna(selected_start):
+            start_day = max(start_day, selected_start.floor("D"))
 
-    for status in ALLOWED_STATUSES:
-        if status not in trend.columns:
-            trend[status] = 0
+    rows = []
+    for day in pd.date_range(start=start_day, end=end_day, freq="D"):
+        day_end = day + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+        snapshot = df[df["Status From"] <= day_end].copy()
+        if snapshot.empty:
+            continue
 
-    trend["Total"] = trend[ALLOWED_STATUSES].sum(axis=1)
-    for status in ALLOWED_STATUSES:
-        trend[status] = trend.apply(
-            lambda r: round(r[status] / r["Total"] * 100, 1) if r["Total"] else 0,
-            axis=1,
-        )
+        snapshot = snapshot.sort_values(
+            ["Machine ID", "Status From", "Updated At", "Job ID"],
+            ascending=[True, False, False, False],
+            na_position="last",
+        ).drop_duplicates(subset=["Machine ID"], keep="first")
 
-    trend = trend.sort_values("DateOnly")
-    trend["Date"] = trend["DateOnly"].dt.strftime("%d %b")
-    return trend[["Date", *ALLOWED_STATUSES]]
+        total = int(snapshot["Machine ID"].nunique())
+        counts = snapshot["Status"].value_counts()
+        row = {"Date": day.strftime("%d %b")}
+        for status in ALLOWED_STATUSES:
+            row[status] = round(float(counts.get(status, 0)) / total * 100, 1) if total else 0
+        rows.append(row)
+
+    return pd.DataFrame(rows, columns=["Date", *ALLOWED_STATUSES])
 
 
 def downtime_reasons(filters=None):
@@ -577,21 +614,24 @@ def idle_machine_detail(filters=None):
     df = machines_data(filters)
     if df.empty:
         return pd.DataFrame()
+
     df = df[df["Status"] == "Idle"].copy()
     if df.empty:
         return pd.DataFrame()
+
     df = _add_status_duration(df, filters)
+    # Longest-idle machine first. Keep the numeric helper only for sorting.
+    df = df.sort_values("Duration Minutes", ascending=False, na_position="last")
     df = df.rename(columns={"Status From": "Since From"})
     return df[[c for c in ["Machine Name", "Since From", "Duration"] if c in df.columns]]
 
 
 def department_summary(filters=None):
     df = machines_data(filters)
-    columns = ["Department", "Total", "Running", "Idle", "Stopped", "Halt / Stop", "OEE %"]
+    columns = ["Department", "Total", "Running", "Idle", "Halt / Stop", "OEE %"]
     if df.empty:
         return pd.DataFrame(columns=columns)
 
-    # API currently returns blank department; use a dashboard-safe fallback bucket.
     dept_series = df["Department"].fillna("").astype(str).str.strip()
     df = df.copy()
     df["Department"] = dept_series.where(dept_series.ne(""), "All Machines")
@@ -608,20 +648,37 @@ def department_summary(filters=None):
                 "Total": int(group["Machine ID"].nunique()),
                 "Running": int(counts.get("Running", 0)),
                 "Idle": int(counts.get("Idle", 0)),
-                "Stopped": int(counts.get("Stopped", 0)),
                 "Halt / Stop": int(counts.get("Halt / Stop", 0)),
                 "OEE %": oee,
             }
         )
     return pd.DataFrame(rows, columns=columns)
 
+def _is_ton_uom(value):
+    text = str(value or "").strip().upper().replace(".", "")
+    return text in {"TON", "TONS", "MT", "M/T", "METRIC TON", "METRIC TONS", "TONNE", "TONNES"}
+
+
+def _explicit_ton_target_source(source_name):
+    text = str(source_name or "").lower()
+    return any(token in text for token in ["ton", "tonnage"])
+
 
 def _production_event_dataframe(filters=None, apply_dates=True):
+    """
+    Return production events without inventing a tonnage conversion.
+
+    Actual Tons is accepted only when the database exposes an explicit tonnage
+    column, or when the job UOM says the generic actual quantity is already tons.
+    Planned/Target Tons follows the same rule. If neither condition is met, the
+    dashboard reports the ton values as unavailable instead of using a hardcoded
+    target or silently treating metres/units as tons.
+    """
     df = _api_dataframe(filters, apply_dates=apply_dates)
     if df.empty:
         return pd.DataFrame()
 
-    required = ["Job ID", "Status From", "Actual Qty", "Length"]
+    required = ["Job ID", "Status From", "Actual Qty", "Planned Qty"]
     if any(c not in df.columns for c in required):
         return pd.DataFrame()
 
@@ -629,149 +686,193 @@ def _production_event_dataframe(filters=None, apply_dates=True):
     if df.empty:
         return df
 
-    # Calculate deltas in chronological order. Do NOT drop machines here; production
-    # requires all events, unlike current-state KPI cards.
+    uom_is_tons = df.get("Production UOM", pd.Series("", index=df.index)).apply(_is_ton_uom)
+    explicit_actual = pd.to_numeric(df.get("Production Tons", 0), errors="coerce")
+    generic_actual = pd.to_numeric(df["Actual Qty"], errors="coerce").fillna(0)
+
+    df["Actual Tons Source"] = explicit_actual.where(explicit_actual.notna())
+    df.loc[df["Actual Tons Source"].isna() & uom_is_tons, "Actual Tons Source"] = generic_actual
+
+    planned = pd.to_numeric(df["Planned Qty"], errors="coerce").fillna(0)
+    source_is_tons = df.get("Planned Qty Source", pd.Series("", index=df.index)).apply(_explicit_ton_target_source)
+    df["Target Tons Source"] = pd.NA
+    df.loc[source_is_tons | uom_is_tons, "Target Tons Source"] = planned
+    df["Target Tons Source"] = pd.to_numeric(df["Target Tons Source"], errors="coerce")
+
+    # Delta actual cumulative production per job, when a valid tonnage source exists.
     df = df.sort_values(["Job ID", "Status From"])
+    df["Previous Actual Tons"] = df.groupby("Job ID")["Actual Tons Source"].shift(1)
+    df["Production Tons Delta"] = df["Actual Tons Source"] - df["Previous Actual Tons"]
+    first_actual = df["Previous Actual Tons"].isna() & df["Actual Tons Source"].notna()
+    df.loc[first_actual, "Production Tons Delta"] = df.loc[first_actual, "Actual Tons Source"]
+    negative = df["Production Tons Delta"] < 0
+    df.loc[negative, "Production Tons Delta"] = df.loc[negative, "Actual Tons Source"]
 
-    df["Previous Actual Qty"] = df.groupby("Job ID")["Actual Qty"].shift(1)
-    df["Production Qty"] = df["Actual Qty"] - df["Previous Actual Qty"]
-    df["Production Qty"] = df["Production Qty"].fillna(df["Actual Qty"])
-    df.loc[df["Production Qty"] < 0, "Production Qty"] = df.loc[
-        df["Production Qty"] < 0, "Actual Qty"
-    ]
-
+    # Length remains available as a separate real metric, never relabelled as tons.
+    length = pd.to_numeric(df.get("Length", 0), errors="coerce").fillna(0)
     df["Previous Length"] = df.groupby("Job ID")["Length"].shift(1)
-    df["Production Length"] = df["Length"] - df["Previous Length"]
-    df["Production Length"] = df["Production Length"].fillna(df["Length"])
-    df.loc[df["Production Length"] < 0, "Production Length"] = df.loc[
-        df["Production Length"] < 0, "Length"
-    ]
+    df["Production Length"] = length - pd.to_numeric(df["Previous Length"], errors="coerce")
+    df["Production Length"] = df["Production Length"].fillna(length)
+    df.loc[df["Production Length"] < 0, "Production Length"] = length
     df["KM"] = df["Production Length"] / 1000
     return df
 
 
+def _target_for_window(window):
+    """Sum one DB target per job, avoiding repetition on every event row."""
+    if window is None or window.empty or "Target Tons Source" not in window.columns:
+        return None
+
+    valid = window.dropna(subset=["Target Tons Source"]).copy()
+    valid = valid[valid["Target Tons Source"] > 0]
+    if valid.empty:
+        return None
+
+    per_job = valid.sort_values("Status From").drop_duplicates(subset=["Job ID"], keep="last")
+    return round(float(per_job["Target Tons Source"].sum()), 2)
+
+
+def _actual_for_window(window):
+    if window is None or window.empty or "Production Tons Delta" not in window.columns:
+        return None
+    values = pd.to_numeric(window["Production Tons Delta"], errors="coerce").dropna()
+    if values.empty:
+        return None
+    return round(float(values.sum()), 2)
+
+
 def last_24h_production(filters=None):
-    df = _production_event_dataframe(filters)
-    daily_target_tons = round(YEARLY_PRODUCTION_TARGET_TONS / 365, 2)
-    daily_target_km = round(YEARLY_PRODUCTION_TARGET_KM / 365, 2)
+    # Fetch complete production history so the 24-hour window is anchored to
+    # real current time rather than to the last event timestamp.
+    df = _production_event_dataframe(filters, apply_dates=False)
+
+    to_time = pd.Timestamp.now(tz="UTC")
+    from_time = to_time - pd.Timedelta(hours=24)
 
     empty_result = {
-        "actual": 0,
-        "actual_km": 0,
-        "target": daily_target_tons,
-        "target_km": daily_target_km,
-        "achievement_pct": 0,
-        "gap": -daily_target_tons,
-        "gap_km": -daily_target_km,
-        "gap_label": "Below Target",
+        "actual": None,
+        "target": None,
+        "achievement_pct": None,
+        "gap": None,
+        "gap_label": "Target Unavailable",
         "uom": "Tons",
-        "km_uom": "KM",
         "records": 0,
-        "from_time": "-",
-        "to_time": "-",
+        "from_time": from_time.strftime("%d %b %Y %I:%M %p"),
+        "to_time": to_time.strftime("%d %b %Y %I:%M %p"),
+        "data_available": False,
+        "target_available": False,
     }
 
     if df.empty:
         return empty_result
 
-    to_time = pd.Timestamp.now(tz="UTC")
-    if pd.isna(to_time):
-        return empty_result
-    from_time = to_time - pd.Timedelta(hours=24)
-
     window = df[(df["Status From"] >= from_time) & (df["Status From"] <= to_time)].copy()
-    actual = round(float(_safe_numeric(window["Production Qty"]).sum()), 2)
-    actual_km = round(float(_safe_numeric(window["KM"]).sum()), 2)
-    target = daily_target_tons
-    target_km = daily_target_km
-    achievement = round(actual / target * 100, 1) if target > 0 else 0
-    gap = round(actual - target, 2)
-    gap_km = round(actual_km - target_km, 2)
+    actual = _actual_for_window(window)
+    target = _target_for_window(window)
+
+    achievement = None
+    gap = None
+    gap_label = "Target Unavailable"
+    if actual is not None and target is not None and target > 0:
+        achievement = round(actual / target * 100, 1)
+        gap = round(actual - target, 2)
+        gap_label = "Above Target" if gap >= 0 else "Below Target"
 
     return {
         "actual": actual,
-        "actual_km": actual_km,
         "target": target,
-        "target_km": target_km,
         "achievement_pct": achievement,
         "gap": gap,
-        "gap_km": gap_km,
-        "gap_label": "Above Target" if gap >= 0 else "Below Target",
+        "gap_label": gap_label,
         "uom": "Tons",
-        "km_uom": "KM",
         "records": len(window),
         "from_time": from_time.strftime("%d %b %Y %I:%M %p"),
         "to_time": to_time.strftime("%d %b %Y %I:%M %p"),
+        "data_available": actual is not None,
+        "target_available": target is not None,
     }
 
 
 def planned_vs_actual_monthly(filters=None):
     df = _production_event_dataframe(filters, apply_dates=True)
-    filters = _normalize_filters(filters)
+    if df.empty:
+        return pd.DataFrame(columns=["Month", "Target", "Actual", "Achievement %"])
 
-    selected_year = 2026
+    filters = _normalize_filters(filters)
+    selected_year = pd.Timestamp.now(tz="UTC").year
     if filters.get("end_date"):
-        end_date = pd.to_datetime(filters["end_date"], errors="coerce")
+        end_date = pd.to_datetime(filters["end_date"], errors="coerce", utc=True)
         if pd.notna(end_date):
             selected_year = end_date.year
-    elif not df.empty:
-        selected_year = int(df["Status From"].max().year)
 
-    months = pd.date_range(
-        start=f"{selected_year}-01-01",
-        end=f"{selected_year}-12-01",
-        freq="MS",
-    )
-    monthly_target = round(YEARLY_PRODUCTION_TARGET_TONS / 12, 2)
-    base = pd.DataFrame(
-        {
-            "MonthNo": range(1, 13),
-            "Month": [m.strftime("%b") for m in months],
-            "Target": monthly_target,
-            "Actual": 0.0,
-        }
-    )
+    year_df = df[df["Status From"].dt.year == selected_year].copy()
+    if year_df.empty:
+        return pd.DataFrame(columns=["Month", "Target", "Actual", "Achievement %"])
 
-    if not df.empty:
-        year_df = df[df["Status From"].dt.year == selected_year].copy()
-        if not year_df.empty:
-            year_df["MonthNo"] = year_df["Status From"].dt.month
-            actual = year_df.groupby("MonthNo", as_index=False)["Production Qty"].sum()
-            actual = actual.rename(columns={"Production Qty": "ActualNew"})
-            base = base.merge(actual, on="MonthNo", how="left")
-            base["Actual"] = base["ActualNew"].fillna(base["Actual"])
-            base = base.drop(columns=["ActualNew"])
+    year_df["MonthNo"] = year_df["Status From"].dt.month
+    rows = []
+    for month_no, group in year_df.groupby("MonthNo"):
+        actual = _actual_for_window(group)
+        target = _target_for_window(group)
+        rows.append(
+            {
+                "MonthNo": int(month_no),
+                "Month": pd.Timestamp(selected_year, int(month_no), 1).strftime("%b"),
+                "Target": target,
+                "Actual": actual,
+                "Achievement %": round(actual / target * 100, 1)
+                if actual is not None and target is not None and target > 0
+                else None,
+            }
+        )
 
-    base["Achievement %"] = base.apply(
-        lambda r: round(r["Actual"] / r["Target"] * 100, 1) if r["Target"] else 0,
-        axis=1,
-    )
-    return base[["Month", "Target", "Actual", "Achievement %"]]
+    return pd.DataFrame(rows).sort_values("MonthNo")[["Month", "Target", "Actual", "Achievement %"]]
 
 
 def production_daily_trend(filters=None, days=7):
-    df = _production_event_dataframe(filters, apply_dates=True)
-    if df.empty:
+    """
+    Production Overview is sourced from the production targets API.
+
+    The API returns one row per work center.  The dashboard deliberately sums
+    all work centers and displays one combined Target/Actual result, as
+    requested.  Example:
+
+        GCF: target=0, actual=30
+        PCF: target=0, actual=55
+
+    becomes:
+
+        Target = 0
+        Actual = 85
+
+    Achievement is calculated by the UI only when Target > 0.
+    """
+    rows = fetch_production_targets()
+
+    if not rows:
         return pd.DataFrame(columns=["Date", "Target", "Actual"])
 
-    df = df.dropna(subset=["Status From"]).copy()
-    if df.empty:
-        return pd.DataFrame(columns=["Date", "Target", "Actual"])
+    target_total = 0.0
+    actual_total = 0.0
 
-    end_date = pd.Timestamp.now(tz="UTC").floor("D")
-    start_date = end_date - pd.Timedelta(days=max(int(days) - 1, 0))
-    window = df[
-        (df["Status From"].dt.floor("D") >= start_date)
-        & (df["Status From"].dt.floor("D") <= end_date)
-    ].copy()
+    for row in rows:
+        try:
+            target_total += float(row.get("target", 0) or 0)
+        except (TypeError, ValueError):
+            pass
 
-    if window.empty:
-        return pd.DataFrame(columns=["Date", "Target", "Actual"])
+        try:
+            actual_total += float(row.get("actual", 0) or 0)
+        except (TypeError, ValueError):
+            pass
 
-    window["DateOnly"] = window["Status From"].dt.floor("D")
-    daily_target = round(YEARLY_PRODUCTION_TARGET_TONS / 365, 2)
-    result = window.groupby("DateOnly", as_index=False)["Production Qty"].sum()
-    result = result.rename(columns={"Production Qty": "Actual"})
-    result["Date"] = result["DateOnly"].dt.strftime("%d %b")
-    result["Target"] = daily_target
-    return result[["Date", "Target", "Actual"]]
+    return pd.DataFrame(
+        [
+            {
+                "Date": "Total",
+                "Target": round(target_total, 2),
+                "Actual": round(actual_total, 2),
+            }
+        ]
+    )
+

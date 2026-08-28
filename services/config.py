@@ -13,6 +13,7 @@ REQUIRED_ENV_VARS = [
     "DB_USER",
     "DB_PASSWORD",
     "API_BASE_URL",
+    "PRODUCTION_TARGET_API",
 ]
 
 
@@ -35,6 +36,7 @@ DB_NAME = get_required_env("DB_NAME")
 DB_USER = get_required_env("DB_USER")
 DB_PASSWORD = get_required_env("DB_PASSWORD")
 API_BASE_URL = get_required_env("API_BASE_URL").rstrip("/")
+PRODUCTION_TARGET_API = get_required_env("PRODUCTION_TARGET_API")
 
 API_USE_PROXY = os.getenv("API_USE_PROXY", "false").strip().lower() in {
     "1",

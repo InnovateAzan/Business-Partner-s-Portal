@@ -32,7 +32,6 @@ REASON_COLORS = [
 STATUS_COLORS = {
     "Running": COLORS["green"],
     "Idle": COLORS["orange"],
-    "Stopped": COLORS["red"],
     "Halt / Stop": COLORS["purple"],
 }
 
@@ -40,7 +39,6 @@ STATUS_COLORS = {
 STATUS_ORDER = [
     "Running",
     "Idle",
-    "Stopped",
     "Halt / Stop",
 ]
 
@@ -244,10 +242,15 @@ def reason_donut(df):
     if total_minutes == 0:
         return _empty_chart(height=310)
 
-    center_label = (
-        f"{total_minutes // 60}h "
-        f"{total_minutes % 60}m"
-    )
+    days, remainder = divmod(total_minutes, 1440)
+    hours, mins = divmod(remainder, 60)
+    center_parts = []
+    if days:
+        center_parts.append(f"{days}d")
+    if hours or days:
+        center_parts.append(f"{hours}h")
+    center_parts.append(f"{mins}m")
+    center_label = " ".join(center_parts)
 
     fig = go.Figure(
         data=[
@@ -280,7 +283,7 @@ def reason_donut(df):
         text=(
             f"<b>{center_label}</b>"
             "<br>"
-            "<span style='font-size:10px'>"
+            "<span style='font-size:8px'>"
             "Total Downtime"
             "</span>"
         ),
@@ -289,7 +292,7 @@ def reason_donut(df):
         showarrow=False,
 
         font=dict(
-            size=16,
+            size=12,
             color="#0f172a",
         ),
     )
@@ -333,199 +336,105 @@ def reason_donut(df):
 
 def production_overview_chart(df):
     if df is None or df.empty:
-        return _empty_chart(height=150)
+        return _empty_chart("Production tonnage unavailable", height=150)
 
-    required = {
-        "Date",
-        "Target",
-        "Actual",
-    }
-
+    required = {"Date", "Target", "Actual"}
     if not required.issubset(set(df.columns)):
-        return _empty_chart(height=150)
+        return _empty_chart("Production tonnage unavailable", height=150)
 
     df = df.copy()
-
-    # Prototype shows a compact recent 7-day view
     if len(df) > 7:
         df = df.tail(7).copy()
 
+    # Keep missing DB values as missing. Do not convert an unavailable target
+    # into a fake zero bar.
+    import pandas as pd
+    df["Target"] = pd.to_numeric(df["Target"], errors="coerce")
+    df["Actual"] = pd.to_numeric(df["Actual"], errors="coerce")
+
+    has_target = df["Target"].notna().any()
+    has_actual = df["Actual"].notna().any()
+    if not has_target and not has_actual:
+        return _empty_chart("Production tonnage unavailable", height=150)
+
     fig = go.Figure()
 
-    # =====================================================
-    # TARGET
-    # Light Blue
-    # =====================================================
-
-    fig.add_trace(
-        go.Bar(
-            x=df["Date"],
-            y=df["Target"],
-            name="Target",
-
-            marker=dict(
-                color="#d9eaff",
-                line=dict(
-                    color="#c9def8",
-                    width=0.5,
+    if has_target:
+        fig.add_trace(
+            go.Bar(
+                x=df["Date"],
+                y=df["Target"],
+                name="Target",
+                marker=dict(
+                    color="#d9eaff",
+                    line=dict(color="#c9def8", width=0.5),
                 ),
-            ),
-
-            width=0.42,
-
-            hovertemplate=(
-                "<b>%{x}</b><br>"
-                "Target: %{y:.2f} Tons"
-                "<extra></extra>"
-            ),
-        )
-    )
-
-    # =====================================================
-    # ACTUAL
-    # Green
-    # =====================================================
-
-    fig.add_trace(
-        go.Bar(
-            x=df["Date"],
-            y=df["Actual"],
-            name="Actual",
-
-            marker=dict(
-                color="#16a34a",
-                line=dict(
-                    color="#0f8f3d",
-                    width=0.5,
+                width=0.42,
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "Target: %{y:.2f} Tons"
+                    "<extra></extra>"
                 ),
-            ),
-
-            width=0.26,
-
-            hovertemplate=(
-                "<b>%{x}</b><br>"
-                "Actual: %{y:.2f} Tons"
-                "<extra></extra>"
-            ),
+            )
         )
-    )
 
-    max_target = (
-        float(df["Target"].max())
-        if not df["Target"].empty
-        else 0
-    )
+    if has_actual:
+        fig.add_trace(
+            go.Bar(
+                x=df["Date"],
+                y=df["Actual"],
+                name="Actual",
+                marker=dict(
+                    color="#16a34a",
+                    line=dict(color="#0f8f3d", width=0.5),
+                ),
+                width=0.26,
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "Actual: %{y:.2f} Tons"
+                    "<extra></extra>"
+                ),
+            )
+        )
 
-    max_actual = (
-        float(df["Actual"].max())
-        if not df["Actual"].empty
-        else 0
-    )
-
-    max_y = max(
-        max_target,
-        max_actual,
-    )
-
-    # =====================================================
-    # LAYOUT
-    # =====================================================
+    numeric_values = []
+    if has_target:
+        numeric_values.extend(df["Target"].dropna().tolist())
+    if has_actual:
+        numeric_values.extend(df["Actual"].dropna().tolist())
+    max_value = max(numeric_values) if numeric_values else 0
 
     fig.update_layout(
         height=150,
-
-        # Actual appears inside/over target like prototype
+        margin=dict(l=34, r=8, t=28, b=28),
         barmode="overlay",
-
-        bargap=0.30,
-
-        margin=dict(
-            l=28,
-            r=8,
-            t=28,
-            b=25,
-        ),
-
+        bargap=0.34,
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-
-        showlegend=True,
-
         legend=dict(
             orientation="h",
-
             yanchor="bottom",
             y=1.02,
-
             xanchor="center",
             x=0.5,
-
-            font=dict(
-                family="Inter, Arial",
-                size=9,
-                color="#334155",
-            ),
-
-            bgcolor="rgba(0,0,0,0)",
-
-            itemclick=False,
-            itemdoubleclick=False,
+            font=dict(size=8),
         ),
-
-        xaxis=dict(
-            showgrid=False,
-            zeroline=False,
-
-            tickfont=dict(
-                family="Inter, Arial",
-                size=8,
-                color="#334155",
-            ),
-
-            tickangle=0,
-
-            fixedrange=True,
-        ),
-
+        xaxis=dict(showgrid=False, tickfont=dict(size=8), automargin=True),
         yaxis=dict(
-            range=[
-                0,
-                max_y * 1.18
-                if max_y > 0
-                else 10
-            ],
-
+            title=None,
+            rangemode="tozero",
+            range=[0, max_value * 1.2] if max_value > 0 else None,
             showgrid=True,
-
-            gridcolor="#edf2f7",
-            gridwidth=1,
-
+            gridcolor=COLORS["grid"],
             zeroline=False,
-
-            tickfont=dict(
-                family="Inter, Arial",
-                size=8,
-                color="#334155",
-            ),
-
-            fixedrange=True,
+            tickfont=dict(size=8),
+            automargin=True,
         ),
-
-        font=dict(
-            family="Inter, Arial",
-            size=9,
-            color="#172033",
-        ),
-
-        hovermode="x unified",
+        font=dict(family="Inter, Arial", size=9, color="#172033"),
     )
 
     return _graph(fig)
 
-
-# =========================================================
-# GENERIC TREND LINE
-# =========================================================
 
 def trend_line(df, chart_type="downtime"):
     if df is None or df.empty:

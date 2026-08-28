@@ -16,14 +16,13 @@ from components.charts import (
 from components.tables import (
     data_table,
     card_header,
-    stopped_machines_card_header,
-    stopped_machines_table,
+    idle_machines_card_header,
+    idle_machines_table,
 )
 
 from services.mock_data import (
     get_kpis,
     downtime_reasons,
-    stopped_machine_detail,
     idle_machine_detail,
     department_summary,
     machine_status_trend,
@@ -37,11 +36,12 @@ from services.mock_data import (
 # =========================================================
 
 def _format_number(value):
+    if value is None:
+        return "N/A"
     try:
         value = float(value)
     except Exception:
-        value = 0
-
+        return "N/A"
     return f"{value:,.2f}"
 
 
@@ -132,8 +132,6 @@ def reason_legend(reasons_df):
 # Production Overview
 # Current Performance
 #
-# 8.22          2.00          24.3%
-# Target        Actual        Achievement
 #
 # Target / Actual legend
 #
@@ -141,31 +139,18 @@ def reason_legend(reasons_df):
 # =========================================================
 
 def production_overview_card(production_daily):
-    target = 0
-    actual = 0
-    achievement_pct = 0
+    target = None
+    actual = None
+    achievement_pct = None
 
-    if (
-        production_daily is not None
-        and not production_daily.empty
-    ):
-        target = float(
-            production_daily["Target"]
-            .fillna(0)
-            .sum()
-        )
+    if production_daily is not None and not production_daily.empty:
+        target_sum = production_daily["Target"].sum(min_count=1)
+        actual_sum = production_daily["Actual"].sum(min_count=1)
+        target = None if target_sum != target_sum else float(target_sum)
+        actual = None if actual_sum != actual_sum else float(actual_sum)
 
-        actual = float(
-            production_daily["Actual"]
-            .fillna(0)
-            .sum()
-        )
-
-        if target > 0:
-            achievement_pct = round(
-                (actual / target) * 100,
-                1,
-            )
+        if target is not None and actual is not None and target > 0:
+            achievement_pct = round((actual / target) * 100, 1)
 
     return html.Div(
         className=(
@@ -186,7 +171,7 @@ def production_overview_card(production_daily):
                     ),
 
                     html.P(
-                        "Current Performance",
+                        "Combined production target vs actual",
                         className="production-overview-subtitle",
                     ),
                 ],
@@ -207,7 +192,7 @@ def production_overview_card(production_daily):
                         ),
                         children=[
                             html.Strong(
-                                f"{target:,.2f}"
+                                _format_number(target)
                             ),
                             html.Span(
                                 "Target (Tons)"
@@ -227,7 +212,7 @@ def production_overview_card(production_daily):
                         ),
                         children=[
                             html.Strong(
-                                f"{actual:,.2f}"
+                                _format_number(actual)
                             ),
                             html.Span(
                                 "Actual (Tons)"
@@ -247,7 +232,7 @@ def production_overview_card(production_daily):
                         ),
                         children=[
                             html.Strong(
-                                f"{achievement_pct:.1f}%"
+                                "N/A" if achievement_pct is None else f"{achievement_pct:.1f}%"
                             ),
                             html.Span(
                                 "Achievement"
@@ -294,10 +279,6 @@ def overview_page(filters):
         filters
     )
 
-    stopped_detail = stopped_machine_detail(
-        filters
-    )
-
     idle_detail = idle_machine_detail(
         filters
     )
@@ -319,7 +300,7 @@ def overview_page(filters):
             html.Div(
                 className=(
                     "kpi-row "
-                    "kpi-row-seven"
+                    "kpi-row-six"
                 ),
                 children=[
 
@@ -384,31 +365,11 @@ def overview_page(filters):
                             0,
                         ),
                     ),
-
-                    # STOPPED
-                    kpi_card(
-                        "Stopped Machines",
-                        kpis.get(
-                            "stopped",
-                            0,
-                        ),
-                        (
-                            f'{kpis.get("stopped_pct", 0)}%'
-                            " of Total"
-                        ),
-                        "■",
-                        "red",
-                        kpis.get(
-                            "stopped_pct",
-                            0,
-                        ),
-                    ),
-
                     # OEE
                     kpi_card(
                         "Overall OEE",
                         f'{kpis.get("oee", 0)}%',
-                        "↑ 2.4% vs Last 7 Days",
+                        "Combined production target vs actual",
                         "◔",
                         "blue",
                         kpis.get(
@@ -420,13 +381,22 @@ def overview_page(filters):
                     # PRODUCTION
                     production_kpi_card(
                         "Last 24 Hours Production",
-                        f"{_format_number(production.get('actual', 0))} Tons",
-                        f"Target: {_format_number(production.get('target', 0))} Tons",
                         (
-                            f"{production.get('achievement_pct', 0)}% "
-                            f"({production.get('gap_label', 'Below Target')})"
+                            f"{_format_number(production.get('actual'))} Tons"
+                            if production.get("actual") is not None
+                            else "N/A Tons"
                         ),
-                        production.get("achievement_pct", 0),
+                        (
+                            f"Target: {_format_number(production.get('target'))} Tons"
+                            if production.get("target") is not None
+                            else "Target: N/A"
+                        ),
+                        (
+                            f"{production.get('achievement_pct'):.1f}% ({production.get('gap_label')})"
+                            if production.get("achievement_pct") is not None
+                            else production.get("gap_label", "Target Unavailable")
+                        ),
+                        production.get("achievement_pct") or 0,
                     ),
                 ],
             ),
@@ -468,7 +438,7 @@ def overview_page(filters):
                         ),
                         children=[
                             card_header(
-                                "Stopped Machines - "
+                                "Halt / Stop - "
                                 "Downtime Reasons"
                             ),
 
@@ -506,30 +476,9 @@ def overview_page(filters):
             html.Div(
                 className=(
                     "overview-trend-row "
-                    "overview-trend-row-three"
+                    "overview-trend-row-two"
                 ),
                 children=[
-
-                    # STOPPED MACHINES
-                    html.Div(
-                        className=(
-                            "card "
-                            "overview-trend-card"
-                        ),
-                        children=[
-                            stopped_machines_card_header(
-                                "Stopped Machines",
-                                "Real-time stopped machine detail",
-                                "View All",
-                                "#",
-                            ),
-
-                            stopped_machines_table(
-                                stopped_detail,
-                                max_rows=5,
-                            ),
-                        ],
-                    ),
 
                     # IDLE MACHINES
                     html.Div(
@@ -538,13 +487,14 @@ def overview_page(filters):
                             "overview-trend-card"
                         ),
                         children=[
-                            card_header(
-                                "Idle Machines"
+                            idle_machines_card_header(
+                                "Idle Machines",
+                                "Machines available with no active running job",
                             ),
 
-                            data_table(
+                            idle_machines_table(
                                 idle_detail,
-                                max_rows=5,
+                                max_rows=None,
                             ),
                         ],
                     ),

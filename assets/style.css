@@ -2393,204 +2393,389 @@ body .overview-dashboard > .overview-main-chart-row.overview-main-chart-row-thre
     .advanced-filters-panel { flex-wrap:wrap !important; justify-content:flex-start !important; }
 }
 
+
 /* =========================================================
-   HEADER FILTER ICON SPACING FIX
-   Keep one icon only and reserve real space for its text.
+   FILTER / IDLE ICON POLISH (2026-08-27)
+   ========================================================= */
+
+/* Calendar icon shown inside the Date Range control. */
+.prototype-header-controls .date-leading-icon,
+.date-leading-icon {
+    width: 18px !important;
+    height: 18px !important;
+    display: inline-block !important;
+    background-size: 17px 17px !important;
+    background-repeat: no-repeat !important;
+    background-position: center !important;
+}
+
+/* Dedicated department/building icon; do not reuse the funnel icon. */
+.icon-department {
+    width: 18px !important;
+    height: 18px !important;
+    display: inline-block !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23172554' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 21V7l8-4v18M12 9h8v12M7.5 9.5h1M7.5 13h1M7.5 16.5h1M15.5 12h1M15.5 15.5h1M15.5 19h1M2.5 21h19'/%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: center !important;
+    background-size: 17px 17px !important;
+}
+
+/* Ensure Date/Department text starts after its icon. */
+.prototype-header-controls .dropdown-with-icon .dash-dropdown .Select-control,
+.prototype-header-controls .custom-date-range-picker .DateRangePickerInput {
+    padding-left: 38px !important;
+}
+
+/* Idle detail card header matching the orange prototype language. */
+.idle-card-header {
+    min-height: 38px !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 9px !important;
+    margin-bottom: 8px !important;
+}
+
+.idle-card-icon {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    border-radius: 10px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: #fff0d8 !important;
+}
+
+.idle-card-icon-glyph {
+    width: 18px !important;
+    height: 18px !important;
+    display: block !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f08a00' stroke-width='1.8' stroke-linecap='round'%3E%3Cpath d='M7 8h10v6a5 5 0 0 1-10 0V8Z'/%3E%3Cpath d='M17 10h2a2 2 0 0 1 0 4h-2M9 4v2m3-2v2m3-2v2M6 20h12'/%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: center !important;
+    background-size: 18px 18px !important;
+}
+
+.idle-card-copy {
+    min-width: 0 !important;
+}
+
+.idle-card-title {
+    margin: 0 !important;
+    color: #172033 !important;
+    font-size: 13px !important;
+    line-height: 16px !important;
+    font-weight: 900 !important;
+}
+
+.idle-card-subtitle {
+    margin: 2px 0 0 !important;
+    color: #7b8796 !important;
+    font-size: 9px !important;
+    line-height: 12px !important;
+    font-weight: 650 !important;
+}
+
+
+/* =========================================================
+   IDLE MERGE BUSINESS-RULE OVERRIDES
+   Stopped current-state category is merged into Idle.
 ========================================================= */
 
-/* Icon layer */
-.prototype-header-controls .date-input-with-icon,
-.prototype-header-controls .dropdown-with-icon {
+/* Six KPI cards: Summary, Running, Idle, Halt/Stop, OEE, Production */
+.kpi-row.kpi-row-six {
+    display: grid !important;
+    grid-template-columns: minmax(0,1.45fr) repeat(4,minmax(0,1fr)) minmax(0,1.22fr) !important;
+    gap: 9px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+}
+.kpi-row-six > * { min-width: 0 !important; }
+
+/* Lower row now contains only Idle Machines and Department Summary. */
+.overview-trend-row-two {
+    display: grid !important;
+    grid-template-columns: minmax(0,1fr) minmax(0,1fr) !important;
+    gap: 10px !important;
+    width: 100% !important;
+    align-items: stretch !important;
+}
+
+/* Idle machine table styling */
+.idle-machine-table th {
+    background: #fff9ef !important;
+    color: #9a5700 !important;
+}
+.idle-machine-table td {
+    padding: 8px 8px !important;
+    vertical-align: middle !important;
+}
+.idle-machine-cell {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    font-weight: 800 !important;
+    color: #172033 !important;
+}
+.idle-machine-dot {
+    color: #f59e0b !important;
+    font-size: 11px !important;
+    line-height: 1 !important;
+}
+.idle-since-text {
+    font-weight: 700 !important;
+    color: #334155 !important;
+}
+.idle-duration-pill {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 4px 10px !important;
+    border-radius: 999px !important;
+    background: #fff3dc !important;
+    color: #f08a00 !important;
+    font-weight: 700 !important;
+    line-height: 1 !important;
+}
+
+@media (max-width: 1450px) {
+    .kpi-row.kpi-row-six {
+        grid-template-columns: minmax(0,1.35fr) repeat(4,minmax(0,1fr)) minmax(0,1.12fr) !important;
+        gap: 7px !important;
+    }
+}
+
+@media (max-width: 1100px) {
+    .kpi-row.kpi-row-six {
+        grid-template-columns: repeat(3,minmax(0,1fr)) !important;
+    }
+}
+
+@media (max-width: 760px) {
+    .kpi-row.kpi-row-six,
+    .overview-trend-row-two {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+/* =========================================================
+   FINAL FILTER POPOVER + IDLE TABLE POLISH
+   ========================================================= */
+
+/* Header only carries brand, refresh and Filters. */
+.prototype-header {
     position: relative !important;
+    z-index: 1000 !important;
     overflow: visible !important;
 }
 
-.prototype-header-controls .filter-leading-icon,
-.prototype-header-controls .date-leading-icon {
+.prototype-header-controls {
+    position: relative !important;
+}
+
+/* Light green actions, matching the dashboard palette. */
+.prototype-refresh-btn,
+.prototype-filters-btn {
+    background: #f0fdf4 !important;
+    color: #15803d !important;
+    border: 1px solid #bbf7d0 !important;
+    box-shadow: 0 3px 8px rgba(21, 128, 61, 0.06) !important;
+}
+
+.prototype-refresh-btn:hover,
+.prototype-filters-btn:hover {
+    background: #dcfce7 !important;
+    color: #166534 !important;
+    border-color: #86efac !important;
+}
+
+.icon-refresh-dark {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2315803d' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 12a8 8 0 0 1-13.6 5.7'/%3E%3Cpath d='M4 12a8 8 0 0 1 13.6-5.7'/%3E%3Cpath d='M20 4v5h-5M4 20v-5h5'/%3E%3C/svg%3E") !important;
+}
+
+.icon-filter-green {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2315803d' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6h16l-6.5 7.2v4.8l-3 1.7v-6.5L4 6Z'/%3E%3C/svg%3E") !important;
+}
+
+/* Floating card: opening Filters no longer pushes the dashboard down. */
+.advanced-filters-panel.filter-popover {
     position: absolute !important;
-    left: 12px !important;
-    top: 50% !important;
-    transform: translateY(-50%) !important;
-    z-index: 10 !important;
-    width: 17px !important;
-    height: 17px !important;
-    min-width: 17px !important;
+    top: 66px !important;
+    right: 18px !important;
+    width: min(430px, calc(100vw - 28px)) !important;
+    max-height: calc(100vh - 90px) !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 14px !important;
+    box-shadow: 0 18px 45px rgba(15, 23, 42, 0.16) !important;
+    z-index: 100000 !important;
+}
+
+.filter-popover-header {
+    display: flex !important;
+    align-items: flex-start !important;
+    justify-content: space-between !important;
+    gap: 12px !important;
+    padding: 14px 16px 11px !important;
+    border-bottom: 1px solid #edf1f5 !important;
+}
+
+.filter-popover-title {
+    margin: 0 !important;
+    color: #172033 !important;
+    font-size: 14px !important;
+    line-height: 18px !important;
+    font-weight: 900 !important;
+}
+
+.filter-popover-subtitle {
+    margin: 2px 0 0 !important;
+    color: #7b8796 !important;
+    font-size: 9px !important;
+    line-height: 12px !important;
+    font-weight: 600 !important;
+}
+
+.filter-popover-close {
+    width: 30px !important;
+    height: 30px !important;
+    min-width: 30px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 8px !important;
+    background: #f8fafc !important;
+    color: #64748b !important;
+    font-size: 20px !important;
+    line-height: 28px !important;
+    cursor: pointer !important;
+}
+
+.filter-popover-close:hover {
+    background: #eef2f6 !important;
+    color: #172033 !important;
+}
+
+.filter-popover-body {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 12px !important;
+    padding: 14px 16px !important;
+    overflow: visible !important;
+}
+
+.filter-popover .popup-filter-box,
+.filter-popover .filter-box,
+.filter-popover .date-range-compact-box,
+.filter-popover .department-filter-box,
+.filter-popover .machine-type-filter-box,
+.filter-popover .search-box {
+    width: 100% !important;
+    min-width: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+.filter-popover .filter-box label {
     display: block !important;
-    background-position: center !important;
+    margin: 0 0 6px !important;
+    color: #344054 !important;
+    font-size: 9px !important;
+    line-height: 12px !important;
+    font-weight: 800 !important;
+}
+
+/* Date Range and Department get a real, separate icon column. */
+.date-filter-control,
+.department-filter-control {
+    width: 100% !important;
+    height: 40px !important;
+    display: flex !important;
+    align-items: center !important;
+    background: #ffffff !important;
+    border: 1px solid #d5dce6 !important;
+    border-radius: 8px !important;
+    overflow: visible !important;
+}
+
+.date-filter-icon,
+.department-filter-icon {
+    width: 36px !important;
+    min-width: 36px !important;
+    height: 38px !important;
+    display: block !important;
     background-repeat: no-repeat !important;
+    background-position: center !important;
     background-size: 16px 16px !important;
     pointer-events: none !important;
 }
 
-/* Date Range: reserve enough room before Start Date */
-.prototype-header-controls .date-input-with-icon .custom-date-range-picker,
-.prototype-header-controls .date-input-with-icon .DateRangePicker,
-.prototype-header-controls .date-input-with-icon .DateRangePickerInput {
-    width: 100% !important;
+.date-filter-icon {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2315803d' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3.5' y='5' width='17' height='15.5' rx='2.5'/%3E%3Cpath d='M8 3.8v3.1M16 3.8v3.1M3.5 9h17'/%3E%3C/svg%3E") !important;
 }
-
-.prototype-header-controls .date-input-with-icon .DateRangePickerInput {
-    box-sizing: border-box !important;
-    padding-left: 46px !important;
-    padding-right: 10px !important;
-}
-
-.prototype-header-controls .date-input-with-icon .DateInput {
-    width: 88px !important;
-    min-width: 88px !important;
-}
-
-.prototype-header-controls .date-input-with-icon .DateInput_input {
-    width: 88px !important;
-    padding-left: 0 !important;
-    padding-right: 0 !important;
-}
-
-/* Hide Dash's own calendar button; the custom calendar icon remains */
-.prototype-header-controls
-.date-input-with-icon
-.DateRangePickerInput_calendarIcon,
-.prototype-header-controls
-.date-input-with-icon
-.DateRangePickerInput_calendarIcon_svg {
-    display: none !important;
-}
-
-/* Department dropdown: reserve a clean icon column */
-.prototype-header-controls .department-filter-box .dropdown-with-icon .Select-control {
-    box-sizing: border-box !important;
-    padding-left: 43px !important;
-}
-
-.prototype-header-controls .department-filter-box .dropdown-with-icon .Select-value,
-.prototype-header-controls .department-filter-box .dropdown-with-icon .Select-placeholder {
-    padding-left: 0 !important;
-}
-
-.prototype-header-controls .department-filter-box {
-    width: 190px !important;
-    min-width: 170px !important;
-}
-
-/* Avoid header filter text touching the icon at 1366px */
-@media (max-width: 1450px) {
-    .prototype-header-controls .date-range-compact-box {
-        width: 245px !important;
-        min-width: 225px !important;
-    }
-
-    .prototype-header-controls .department-filter-box {
-        width: 175px !important;
-        min-width: 165px !important;
-    }
-
-    .prototype-header-controls .date-input-with-icon .DateRangePickerInput {
-        padding-left: 43px !important;
-    }
-
-    .prototype-header-controls .department-filter-box .dropdown-with-icon .Select-control {
-        padding-left: 40px !important;
-    }
-}
-
-/* =========================================================
-   FINAL DATE RANGE ICON FIX
-========================================================= */
-
-.prototype-header-controls .date-input-with-icon {
-    position: relative !important;
-}
-
-.prototype-header-controls .date-input-with-icon .date-leading-icon {
-    position: absolute !important;
-    left: 12px !important;
-    top: 50% !important;
-    transform: translateY(-50%) !important;
-    z-index: 20 !important;
-    width: 16px !important;
-    height: 16px !important;
-    pointer-events: none !important;
-}
-
-/* Move the complete DatePicker content away from the icon */
-.prototype-header-controls .date-input-with-icon .DateRangePickerInput {
-    padding-left: 42px !important;
-    padding-right: 8px !important;
-}
-
-/* Important: first Start Date input must not begin under the icon */
-.prototype-header-controls .date-input-with-icon .DateInput:first-child {
-    margin-left: 0 !important;
-}
-
-.prototype-header-controls .date-input-with-icon .DateInput_input {
-    padding-left: 0 !important;
-    text-indent: 0 !important;
-}
-
-/* Extra safety specifically for Start Date */
-.prototype-header-controls
-.date-input-with-icon
-.DateRangePickerInput
-.DateInput:first-child
-.DateInput_input {
-    padding-left: 0 !important;
-    margin-left: 0 !important;
-}
-
-/* Keep our icon only */
-.prototype-header-controls
-.date-input-with-icon
-.DateRangePickerInput_calendarIcon,
-.prototype-header-controls
-.date-input-with-icon
-.DateRangePickerInput_calendarIcon_svg {
-    display: none !important;
-}
-
-
-/* =========================================================
-   FINAL DEPARTMENT DROPDOWN LAYOUT
-   Separate icon area - no overlap
-========================================================= */
-
-.department-filter-control {
-    width: 100% !important;
-    height: 40px !important;
-
-    display: flex !important;
-    align-items: center !important;
-
-    background: #ffffff !important;
-    border: 1px solid #cfd8e3 !important;
-    border-radius: 8px !important;
-
-    overflow: visible !important;
-}
-
-
-/* Building / Department icon */
 
 .department-filter-icon {
-    width: 38px !important;
-    min-width: 38px !important;
-    height: 40px !important;
-
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23172554' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 21h16'/%3E%3Cpath d='M6 21V5l6-3v19'/%3E%3Cpath d='M12 21V9l6-3v15'/%3E%3Cpath d='M9 8h.01M9 12h.01M9 16h.01M15 11h.01M15 15h.01'/%3E%3C/svg%3E") !important;
-
-    background-repeat: no-repeat !important;
-    background-position: center !important;
-    background-size: 17px 17px !important;
-
-    flex-shrink: 0 !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2315803d' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 21V7l8-4v18M12 9h8v12M7.5 9.5h1M7.5 13h1M7.5 16.5h1M15.5 12h1M15.5 15.5h1M15.5 19h1M2.5 21h19'/%3E%3C/svg%3E") !important;
 }
 
+.date-filter-control .custom-date-range-picker {
+    flex: 1 1 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+}
 
-/* Dropdown fills remaining area */
+.date-filter-control .DateRangePicker,
+.date-filter-control .DateRangePickerInput {
+    width: 100% !important;
+}
+
+.date-filter-control .DateRangePickerInput {
+    height: 38px !important;
+    min-height: 38px !important;
+    display: flex !important;
+    align-items: center !important;
+    padding: 0 6px 0 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    overflow: hidden !important;
+}
+
+.date-filter-control .DateInput {
+    width: 72px !important;
+    min-width: 72px !important;
+    height: 38px !important;
+    background: transparent !important;
+}
+
+.date-filter-control .DateInput_input {
+    width: 72px !important;
+    height: 38px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    color: #344054 !important;
+    font-size: 9px !important;
+    line-height: 38px !important;
+    font-weight: 700 !important;
+}
+
+.date-filter-control .DateRangePickerInput_arrow {
+    width: 16px !important;
+    min-width: 16px !important;
+    margin: 0 4px !important;
+}
+
+.date-filter-control .DateRangePickerInput_calendarIcon,
+.date-filter-control .DateRangePickerInput_calendarIcon_svg {
+    display: none !important;
+}
 
 .department-filter-control .department-dropdown {
     flex: 1 1 auto !important;
@@ -2598,48 +2783,97 @@ body .overview-dashboard > .overview-main-chart-row.overview-main-chart-row-thre
     min-width: 0 !important;
 }
 
-
-/* Remove inner dropdown border because wrapper already has one */
-
 .department-filter-control .Select-control {
     height: 38px !important;
     min-height: 38px !important;
-
-    display: flex !important;
-    align-items: center !important;
-
+    border: 0 !important;
     background: transparent !important;
-    border: none !important;
     box-shadow: none !important;
-    border-radius: 0 !important;
+    padding-left: 0 !important;
 }
-
 
 .department-filter-control .Select-value,
 .department-filter-control .Select-placeholder,
 .department-filter-control .Select-value-label {
     line-height: 38px !important;
-    font-size: 11px !important;
+    font-size: 9.5px !important;
+    color: #344054 !important;
     font-weight: 700 !important;
-    color: #344767 !important;
 }
 
-
-.department-filter-control .Select-value {
-    padding-left: 6px !important;
+.filter-popover .dropdown-with-icon,
+.filter-popover .search-input-wrapper {
+    height: 40px !important;
 }
 
-
-/* Dropdown arrow */
-
-.department-filter-control .Select-arrow-zone {
-    width: 30px !important;
-    padding-right: 10px !important;
+.filter-popover-footer {
+    display: flex !important;
+    justify-content: flex-end !important;
+    padding: 10px 16px 14px !important;
+    border-top: 1px solid #edf1f5 !important;
 }
 
+.popup-reset-btn {
+    align-self: auto !important;
+    margin: 0 !important;
+    width: auto !important;
+    min-width: 108px !important;
+    background: #ffffff !important;
+}
 
-/* Keep dropdown menu above dashboard cards */
+/* Idle list: keep the card compact. Show about five rows and scroll the rest. */
+.overview-trend-row-two .overview-trend-card {
+    height: 310px !important;
+    min-height: 310px !important;
+    max-height: 310px !important;
+}
 
-.department-filter-control .Select-menu-outer {
-    z-index: 99999 !important;
+.overview-trend-row-two .idle-table-wrapper {
+    flex: 1 1 auto !important;
+    max-height: 240px !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    scrollbar-width: thin !important;
+    scrollbar-color: #cbd8d0 transparent !important;
+}
+
+.overview-trend-row-two .idle-table-wrapper::-webkit-scrollbar {
+    width: 6px !important;
+}
+
+.overview-trend-row-two .idle-table-wrapper::-webkit-scrollbar-thumb {
+    background: #cbd8d0 !important;
+    border-radius: 999px !important;
+}
+
+.overview-trend-row-two .idle-table-wrapper::-webkit-scrollbar-track {
+    background: transparent !important;
+}
+
+/* Keep the table header visible while scrolling through idle machines. */
+.overview-trend-row-two .idle-table-wrapper .idle-machine-table th {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 3 !important;
+}
+
+/* Match Department Summary's neutral header, while retaining orange row accents. */
+.idle-machine-table th {
+    background: #f6f9f7 !important;
+    color: #172033 !important;
+    border-bottom: 1px solid #dfe8e3 !important;
+}
+
+@media (max-width: 760px) {
+    .advanced-filters-panel.filter-popover {
+        top: 70px !important;
+        right: 8px !important;
+        width: calc(100vw - 16px) !important;
+        max-height: calc(100vh - 82px) !important;
+        overflow-y: auto !important;
+    }
+
+    .filter-popover-body {
+        grid-template-columns: 1fr !important;
+    }
 }
