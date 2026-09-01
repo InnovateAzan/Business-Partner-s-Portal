@@ -1,0 +1,15 @@
+******  Backend — Terminal 1  ******
+
+cd "D:\Projects\Bussiness Partner Portal\business-partner-portal\backend\BusinessPartnerPortal.Api"
+
+dotnet restore
+dotnet build
+dotnet run
+
+
+*****  Frontend — Terminal 2  *******
+
+cd "D:\Projects\Bussiness Partner Portal\business-partner-portal\frontend"
+
+npm install
+npm run dev
