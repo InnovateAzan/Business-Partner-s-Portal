@@ -1,4 +1,4 @@
-* {
+
     box-sizing: border-box;
 }
 
@@ -2876,4 +2876,1765 @@ body .overview-dashboard > .overview-main-chart-row.overview-main-chart-row-thre
     .filter-popover-body {
         grid-template-columns: 1fr !important;
     }
+}
+
+/* =========================================================
+   FINAL KPI + MACHINE DETAIL TABLE LAYOUT
+   OEE and Last 24 Hours Production KPI cards removed.
+========================================================= */
+
+/* Four KPI cards only: Summary, Running, Idle, Halt / Stop */
+.kpi-row.kpi-row-four {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1.45fr) repeat(3, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    align-items: stretch !important;
+}
+
+.kpi-row-four > * {
+    min-width: 0 !important;
+}
+
+/* Idle and Halt / Stop tables side by side */
+.overview-machine-detail-row {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+    gap: 10px !important;
+    width: 100% !important;
+    align-items: stretch !important;
+}
+
+.machine-detail-card {
+    height: 310px !important;
+    min-height: 310px !important;
+    max-height: 310px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    padding: 12px !important;
+    overflow: hidden !important;
+}
+
+/* Keep approximately five rows visible, remaining rows scroll internally. */
+.machine-detail-card .idle-table-wrapper,
+.machine-detail-card .halt-stop-table-wrapper {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    max-height: 238px !important;
+    overflow-y: auto !important;
+    overflow-x: auto !important;
+    scrollbar-width: thin !important;
+    scrollbar-color: #cbd8d0 transparent !important;
+}
+
+.machine-detail-card .idle-table-wrapper::-webkit-scrollbar,
+.machine-detail-card .halt-stop-table-wrapper::-webkit-scrollbar,
+.department-summary-card .compact-table-wrapper::-webkit-scrollbar {
+    width: 6px !important;
+    height: 6px !important;
+}
+
+.machine-detail-card .idle-table-wrapper::-webkit-scrollbar-thumb,
+.machine-detail-card .halt-stop-table-wrapper::-webkit-scrollbar-thumb,
+.department-summary-card .compact-table-wrapper::-webkit-scrollbar-thumb {
+    background: #cbd8d0 !important;
+    border-radius: 999px !important;
+}
+
+.machine-detail-card .idle-table-wrapper::-webkit-scrollbar-track,
+.machine-detail-card .halt-stop-table-wrapper::-webkit-scrollbar-track,
+.department-summary-card .compact-table-wrapper::-webkit-scrollbar-track {
+    background: transparent !important;
+}
+
+/* Sticky headers for both machine tables */
+.machine-detail-card .data-table th,
+.department-summary-card .data-table th {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 4 !important;
+    background: #f6f9f7 !important;
+    color: #172033 !important;
+}
+
+/* Halt / Stop card header */
+.halt-stop-card-header {
+    min-height: 38px !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 9px !important;
+    margin-bottom: 8px !important;
+}
+
+.halt-stop-card-icon {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    border-radius: 10px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: #f1e8ff !important;
+}
+
+.halt-stop-card-icon-glyph {
+    width: 18px !important;
+    height: 18px !important;
+    display: block !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='6' y='5' width='4' height='14' rx='1.5' fill='%236f2bd9'/%3E%3Crect x='14' y='5' width='4' height='14' rx='1.5' fill='%236f2bd9'/%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: center !important;
+    background-size: 18px 18px !important;
+}
+
+.halt-stop-card-copy {
+    min-width: 0 !important;
+}
+
+.halt-stop-card-title {
+    margin: 0 !important;
+    color: #172033 !important;
+    font-size: 13px !important;
+    line-height: 16px !important;
+    font-weight: 900 !important;
+}
+
+.halt-stop-card-subtitle {
+    margin: 2px 0 0 !important;
+    color: #7b8796 !important;
+    font-size: 9px !important;
+    line-height: 12px !important;
+    font-weight: 650 !important;
+}
+
+/* Halt / Stop table visual language */
+.halt-stop-machine-table th {
+    background: #f6f9f7 !important;
+    color: #172033 !important;
+}
+
+.halt-stop-machine-table td {
+    padding: 8px !important;
+    vertical-align: middle !important;
+}
+
+.halt-stop-machine-cell {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    font-weight: 800 !important;
+    color: #172033 !important;
+}
+
+.halt-stop-machine-dot {
+    color: #7c3aed !important;
+    font-size: 11px !important;
+    line-height: 1 !important;
+}
+
+.halt-stop-since-text {
+    font-weight: 700 !important;
+    color: #334155 !important;
+}
+
+.halt-stop-duration-pill {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 4px 10px !important;
+    border-radius: 999px !important;
+    background: #f1e8ff !important;
+    color: #6f2bd9 !important;
+    font-weight: 700 !important;
+    line-height: 1 !important;
+}
+
+.halt-stop-reason-text {
+    display: inline-block !important;
+    max-width: 230px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    color: #475569 !important;
+    font-weight: 650 !important;
+}
+
+/* Full width Department Summary below both machine tables */
+.department-summary-card {
+    width: 100% !important;
+    height: 310px !important;
+    min-height: 310px !important;
+    max-height: 310px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    padding: 12px !important;
+    overflow: hidden !important;
+}
+
+.department-summary-card .compact-table-wrapper {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    max-height: 238px !important;
+    overflow-y: auto !important;
+    overflow-x: auto !important;
+    scrollbar-width: thin !important;
+    scrollbar-color: #cbd8d0 transparent !important;
+}
+
+.department-summary-card .data-table {
+    width: 100% !important;
+}
+
+.department-summary-card .data-table th,
+.department-summary-card .data-table td {
+    padding: 8px 10px !important;
+}
+
+@media (max-width: 1100px) {
+    .kpi-row.kpi-row-four {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+
+    .overview-machine-detail-row {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+@media (max-width: 700px) {
+    .kpi-row.kpi-row-four {
+        grid-template-columns: 1fr !important;
+    }
+
+    .machine-detail-card,
+    .department-summary-card {
+        height: 300px !important;
+        min-height: 300px !important;
+        max-height: 300px !important;
+    }
+}
+
+/* =========================================================
+   HEADER GLOBAL SEARCH
+   Search Machine / Department
+   ========================================================= */
+
+/* Keep brand, search and actions on one professional row. */
+.prototype-header-row {
+    display: grid !important;
+    grid-template-columns:
+        minmax(285px, auto)
+        minmax(320px, 620px)
+        auto !important;
+    align-items: center !important;
+    gap: 18px !important;
+    width: 100% !important;
+}
+
+/* Search area occupies the available center space. */
+.header-global-search {
+    width: 100% !important;
+    min-width: 260px !important;
+    max-width: 620px !important;
+    height: 40px !important;
+
+    position: relative !important;
+
+    display: flex !important;
+    align-items: center !important;
+
+    justify-self: end !important;
+
+    background: #ffffff !important;
+    border: 1px solid #d8e0e8 !important;
+    border-radius: 10px !important;
+
+    box-shadow: 0 2px 7px rgba(15, 23, 42, 0.025) !important;
+
+    transition:
+        border-color 0.18s ease,
+        box-shadow 0.18s ease,
+        background 0.18s ease !important;
+}
+
+.header-global-search:hover {
+    border-color: #b9c5d2 !important;
+}
+
+.header-global-search:focus-within {
+    border-color: #86efac !important;
+    box-shadow: 0 0 0 3px rgba(21, 128, 61, 0.07) !important;
+}
+
+.header-global-search-icon {
+    position: absolute !important;
+    left: 13px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+
+    width: 17px !important;
+    height: 17px !important;
+
+    display: block !important;
+
+    background-repeat: no-repeat !important;
+    background-position: center !important;
+    background-size: 17px 17px !important;
+
+    z-index: 3 !important;
+    pointer-events: none !important;
+}
+
+.header-global-search-input {
+    width: 100% !important;
+    height: 38px !important;
+
+    padding: 0 14px 0 42px !important;
+
+    border: 0 !important;
+    border-radius: 10px !important;
+    outline: none !important;
+
+    background: transparent !important;
+    color: #172033 !important;
+
+    font-family: Inter, Arial, sans-serif !important;
+    font-size: 11px !important;
+    line-height: 38px !important;
+    font-weight: 600 !important;
+}
+
+.header-global-search-input::placeholder {
+    color: #8a95a5 !important;
+    font-weight: 500 !important;
+}
+
+/* Keep Refresh and Filters compact on the right. */
+.prototype-header-controls {
+    width: auto !important;
+    min-width: max-content !important;
+    flex: none !important;
+    justify-self: end !important;
+    margin-left: 0 !important;
+}
+
+/* Popup now contains only Department, Machine Type and Date Range. */
+.filter-popover-body,
+.filter-popover-body-column {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 16px !important;
+}
+
+/* Search no longer lives inside the Filters popup. */
+.filter-popover .search-box {
+    display: none !important;
+}
+
+/* Slightly more compact popup now that Search is outside. */
+.advanced-filters-panel.filter-popover {
+    width: 460px !important;
+    max-width: calc(100vw - 36px) !important;
+}
+
+/* Responsive header behaviour */
+@media (max-width: 1100px) {
+    .prototype-header-row {
+        grid-template-columns: minmax(260px, auto) minmax(240px, 1fr) auto !important;
+        gap: 12px !important;
+    }
+
+    .header-global-search {
+        min-width: 220px !important;
+        max-width: none !important;
+    }
+}
+
+@media (max-width: 820px) {
+    .prototype-header-row {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        align-items: center !important;
+    }
+
+    .prototype-brand {
+        flex: 1 1 auto !important;
+    }
+
+    .prototype-header-controls {
+        order: 2 !important;
+        margin-left: auto !important;
+    }
+
+    .header-global-search {
+        order: 3 !important;
+        flex: 1 1 100% !important;
+        width: 100% !important;
+        max-width: none !important;
+        min-width: 0 !important;
+    }
+}
+
+@media (max-width: 520px) {
+    .prototype-header-controls {
+        width: 100% !important;
+        justify-content: flex-end !important;
+    }
+
+    .header-global-search {
+        height: 42px !important;
+    }
+
+    .header-global-search-input {
+        height: 40px !important;
+        line-height: 40px !important;
+    }
+}
+
+
+/* =========================================================
+   PLANT SEGMENTED FILTER + MACHINE EFFICIENCY
+   ========================================================= */
+
+/* Header layout: Brand | Search | Plant tabs | Actions */
+.prototype-header-row {
+    display: grid !important;
+    grid-template-columns:
+        minmax(285px, auto)
+        minmax(280px, 1fr)
+        auto
+        auto !important;
+    align-items: center !important;
+    gap: 14px !important;
+    width: 100% !important;
+}
+
+.header-global-search {
+    justify-self: stretch !important;
+    max-width: none !important;
+    min-width: 240px !important;
+}
+
+/* Segmented plant selector */
+.plant-segmented-control {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 0 !important;
+
+    min-width: max-content !important;
+    height: 40px !important;
+
+    padding: 3px !important;
+
+    background: #ffffff !important;
+    border: 1px solid #dce5df !important;
+    border-radius: 10px !important;
+
+    box-shadow: 0 2px 7px rgba(15, 23, 42, 0.025) !important;
+}
+
+.plant-segmented-control label {
+    position: relative !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+
+    height: 32px !important;
+    min-width: 58px !important;
+
+    margin: 0 !important;
+    padding: 0 13px !important;
+
+    border-radius: 8px !important;
+
+    color: #5f6b68 !important;
+    background: transparent !important;
+
+    font-size: 10px !important;
+    line-height: 32px !important;
+    font-weight: 750 !important;
+
+    white-space: nowrap !important;
+    cursor: pointer !important;
+
+    transition:
+        background 0.18s ease,
+        color 0.18s ease,
+        box-shadow 0.18s ease !important;
+}
+
+.plant-segmented-control label:hover {
+    background: #edf8f1 !important;
+    color: #157a4f !important;
+}
+
+/* Hide native radio but keep it accessible/clickable through label. */
+.plant-segmented-control input[type="radio"] {
+    position: absolute !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
+/* Dash places the radio input inside each label. */
+.plant-segmented-control label:has(input[type="radio"]:checked) {
+    background: #19785b !important;
+    color: #ffffff !important;
+    box-shadow: 0 2px 6px rgba(25, 120, 91, 0.16) !important;
+}
+
+/* Fallback for browsers where :has is unavailable: Dash also exposes checked
+   input, so keep checked input's adjacent label text readable. */
+.plant-segmented-control input[type="radio"]:checked {
+    accent-color: #19785b !important;
+}
+
+/* Full-width machine efficiency card replacing Department Summary. */
+.machine-efficiency-card {
+    width: 100% !important;
+    min-width: 0 !important;
+    height: 300px !important;
+    min-height: 300px !important;
+    max-height: 300px !important;
+
+    display: flex !important;
+    flex-direction: column !important;
+
+    padding: 12px 14px 10px !important;
+    overflow: hidden !important;
+}
+
+.machine-efficiency-header {
+    flex: 0 0 auto !important;
+    margin-bottom: 2px !important;
+}
+
+.machine-efficiency-header .card-title {
+    margin: 0 !important;
+    font-size: 13px !important;
+    line-height: 18px !important;
+    font-weight: 900 !important;
+    color: #172033 !important;
+}
+
+.machine-efficiency-subtitle {
+    margin: 1px 0 0 !important;
+    color: #7b8796 !important;
+    font-size: 9px !important;
+    line-height: 12px !important;
+    font-weight: 600 !important;
+}
+
+.machine-efficiency-chart-area {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    width: 100% !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+}
+
+.machine-efficiency-chart-area .dash-graph,
+.machine-efficiency-chart-area .js-plotly-plot,
+.machine-efficiency-chart-area .plot-container,
+.machine-efficiency-chart-area .svg-container {
+    width: 100% !important;
+    height: 250px !important;
+    min-height: 250px !important;
+}
+
+/* Responsive plant selector/header */
+@media (max-width: 1250px) {
+    .prototype-header-row {
+        grid-template-columns: minmax(250px, auto) minmax(220px, 1fr) auto !important;
+    }
+
+    .plant-segmented-control {
+        grid-column: 2 / 4 !important;
+        grid-row: 2 !important;
+        justify-self: end !important;
+    }
+}
+
+@media (max-width: 820px) {
+    .prototype-header-row {
+        display: flex !important;
+        flex-wrap: wrap !important;
+    }
+
+    .header-global-search {
+        order: 3 !important;
+        flex: 1 1 100% !important;
+        width: 100% !important;
+    }
+
+    .plant-segmented-control {
+        order: 4 !important;
+        width: 100% !important;
+        justify-content: stretch !important;
+    }
+
+    .plant-segmented-control label {
+        flex: 1 1 0 !important;
+        min-width: 0 !important;
+    }
+
+    .machine-efficiency-card {
+        height: 290px !important;
+        min-height: 290px !important;
+        max-height: 290px !important;
+    }
+}
+
+/* =========================================================
+   REAL OPERATIONAL KPI ROW
+   OEE / PERFORMANCE / QUALITY / AVAILABILITY
+   ========================================================= */
+.operational-kpi-row {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 14px !important;
+    width: 100% !important;
+    margin-top: 12px !important;
+    margin-bottom: 12px !important;
+}
+
+.operational-kpi-card {
+    min-width: 0 !important;
+    min-height: 142px !important;
+    padding: 16px 18px !important;
+    background: #ffffff !important;
+    border: 1px solid #dfe7e2 !important;
+    border-radius: 14px !important;
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.055) !important;
+    display: flex !important;
+    flex-direction: column !important;
+}
+
+.operational-kpi-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    margin-bottom: 10px !important;
+}
+
+.operational-kpi-title {
+    color: #52645c !important;
+    font-size: 11px !important;
+    font-weight: 800 !important;
+}
+
+.operational-kpi-value {
+    color: #10231c !important;
+    font-size: 27px !important;
+    line-height: 1 !important;
+    font-weight: 900 !important;
+    letter-spacing: -0.5px !important;
+    margin-bottom: 9px !important;
+}
+
+.operational-kpi-subtitle {
+    min-height: 28px !important;
+    color: #839089 !important;
+    font-size: 9px !important;
+    line-height: 1.45 !important;
+    font-weight: 600 !important;
+}
+
+.operational-kpi-progress {
+    width: 100% !important;
+    height: 5px !important;
+    margin-top: auto !important;
+    background: #edf2ef !important;
+    border-radius: 999px !important;
+    overflow: hidden !important;
+}
+
+.operational-kpi-progress-fill {
+    height: 100% !important;
+    border-radius: inherit !important;
+}
+
+.operational-kpi-oee .operational-kpi-progress-fill {
+    background: #267b61 !important;
+}
+
+.operational-kpi-performance .operational-kpi-progress-fill {
+    background: #3b9bd3 !important;
+}
+
+.operational-kpi-quality .operational-kpi-progress-fill {
+    background: #e6a334 !important;
+}
+
+.operational-kpi-availability .operational-kpi-progress-fill {
+    background: #7c55f4 !important;
+}
+
+.operational-kpi-na .operational-kpi-value {
+    color: #64748b !important;
+}
+
+.operational-kpi-na .operational-kpi-progress-fill {
+    width: 0 !important;
+}
+
+/* =========================================================
+   MACHINE-WISE EFFICIENCY - 10 VISIBLE + HORIZONTAL SCROLL
+   ========================================================= */
+.machine-efficiency-chart-area {
+    width: 100% !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+}
+
+.machine-efficiency-scroll {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+    overflow-y: hidden !important;
+    padding-bottom: 2px !important;
+}
+
+.machine-efficiency-scroll-active {
+    overflow-x: auto !important;
+    scrollbar-width: thin !important;
+    scrollbar-color: #b8c7bf #eef3f0 !important;
+}
+
+.machine-efficiency-scroll-active::-webkit-scrollbar {
+    height: 8px !important;
+}
+
+.machine-efficiency-scroll-active::-webkit-scrollbar-track {
+    background: #eef3f0 !important;
+    border-radius: 999px !important;
+}
+
+.machine-efficiency-scroll-active::-webkit-scrollbar-thumb {
+    background: #b8c7bf !important;
+    border-radius: 999px !important;
+}
+
+.machine-efficiency-scroll-active::-webkit-scrollbar-thumb:hover {
+    background: #96aa9f !important;
+}
+
+@media (max-width: 900px) {
+    .operational-kpi-row {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+}
+
+@media (max-width: 560px) {
+    .operational-kpi-row {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+
+/* =========================================================
+   FINAL TOP 8 KPI SINGLE ROW + GROUP CARDS + EFFICIENCY
+   ========================================================= */
+
+/* ---------------------------------------------------------
+   ALL EIGHT KPIs ON ONE ROW
+--------------------------------------------------------- */
+
+.dashboard-kpi-row-eight {
+    display: grid !important;
+    grid-template-columns:
+        minmax(205px, 1.35fr)
+        repeat(7, minmax(128px, 1fr)) !important;
+    gap: 9px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    margin: 0 0 12px !important;
+    align-items: stretch !important;
+}
+
+.dashboard-kpi-row-eight > * {
+    min-width: 0 !important;
+    height: 174px !important;
+    min-height: 174px !important;
+    max-height: 174px !important;
+}
+
+/* Make the normal machine status cards fit cleanly in the eight-column row. */
+.dashboard-kpi-row-eight .kpi-card {
+    padding: 12px 12px 10px !important;
+}
+
+.dashboard-kpi-row-eight .kpi-card .kpi-content h2 {
+    font-size: 25px !important;
+    line-height: 1 !important;
+}
+
+.dashboard-kpi-row-eight .kpi-card .kpi-content p {
+    font-size: 10px !important;
+}
+
+.dashboard-kpi-row-eight .kpi-card .kpi-subtitle {
+    font-size: 8px !important;
+    line-height: 1.3 !important;
+}
+
+/* Operational KPI cards now live in the same top row. */
+.dashboard-kpi-row-eight .operational-kpi-card {
+    height: 174px !important;
+    min-height: 174px !important;
+    max-height: 174px !important;
+    padding: 13px 12px 10px !important;
+    box-shadow: none !important;
+}
+
+.dashboard-kpi-row-eight .operational-kpi-header {
+    margin-bottom: 10px !important;
+}
+
+.dashboard-kpi-row-eight .operational-kpi-title {
+    font-size: 10px !important;
+}
+
+.dashboard-kpi-row-eight .operational-kpi-value {
+    font-size: 25px !important;
+    margin-bottom: 8px !important;
+}
+
+.dashboard-kpi-row-eight .operational-kpi-subtitle {
+    min-height: 31px !important;
+    font-size: 8px !important;
+    line-height: 1.35 !important;
+}
+
+/* Old two-row operational wrapper is intentionally unused now. */
+.operational-kpi-row {
+    margin-top: 0 !important;
+}
+
+
+/* ---------------------------------------------------------
+   MACHINE SUMMARY - 3 COLOUR DISTRIBUTION BAR
+--------------------------------------------------------- */
+
+.dashboard-kpi-row-eight .machine-summary-prototype {
+    height: 174px !important;
+    min-height: 174px !important;
+    max-height: 174px !important;
+    padding: 12px 12px 10px !important;
+}
+
+.machine-summary-progress-multi {
+    display: flex !important;
+    align-items: stretch !important;
+    width: 100% !important;
+    height: 6px !important;
+    background: #edf2ef !important;
+    overflow: hidden !important;
+    border-radius: 999px !important;
+}
+
+.machine-summary-progress-segment {
+    display: block !important;
+    height: 100% !important;
+    min-width: 0 !important;
+    transition: width 0.25s ease !important;
+}
+
+.machine-summary-progress-running {
+    background: #22a06b !important;
+}
+
+.machine-summary-progress-idle {
+    background: #f3a936 !important;
+}
+
+.machine-summary-progress-halt {
+    background: #8457f4 !important;
+}
+
+.machine-summary-progress-segment:first-child {
+    border-radius: 999px 0 0 999px !important;
+}
+
+.machine-summary-progress-segment:last-child {
+    border-radius: 0 999px 999px 0 !important;
+}
+
+.machine-summary-footer {
+    gap: 9px !important;
+}
+
+.machine-summary-separator {
+    display: none !important;
+}
+
+.machine-summary-footer-dot {
+    width: 6px !important;
+    height: 6px !important;
+    display: inline-block !important;
+    border-radius: 50% !important;
+    margin-right: 4px !important;
+    vertical-align: middle !important;
+}
+
+.machine-summary-dot-running {
+    background: #22a06b !important;
+}
+
+.machine-summary-dot-idle {
+    background: #f3a936 !important;
+}
+
+.machine-summary-dot-halt {
+    background: #8457f4 !important;
+}
+
+
+/* ---------------------------------------------------------
+   MACHINE-WISE EFFICIENCY - REFERENCE STYLE
+--------------------------------------------------------- */
+
+.machine-efficiency-card {
+    height: 340px !important;
+    min-height: 340px !important;
+    max-height: 340px !important;
+    padding: 14px 18px 8px !important;
+    overflow: hidden !important;
+}
+
+.machine-efficiency-header {
+    margin-bottom: 0 !important;
+}
+
+.machine-efficiency-header .card-title {
+    font-size: 14px !important;
+    line-height: 19px !important;
+}
+
+.machine-efficiency-subtitle {
+    margin-top: 2px !important;
+    font-size: 9px !important;
+    line-height: 13px !important;
+}
+
+.machine-efficiency-chart-area {
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+}
+
+.machine-efficiency-scroll {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 292px !important;
+    overflow-x: hidden !important;
+    overflow-y: hidden !important;
+    padding-bottom: 5px !important;
+}
+
+.machine-efficiency-scroll-active {
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: thin !important;
+    scrollbar-color: #b8c7bf #eef3f0 !important;
+}
+
+.machine-efficiency-scroll-active::-webkit-scrollbar {
+    height: 7px !important;
+}
+
+.machine-efficiency-scroll-active::-webkit-scrollbar-track {
+    background: #eef3f0 !important;
+    border-radius: 999px !important;
+}
+
+.machine-efficiency-scroll-active::-webkit-scrollbar-thumb {
+    background: #b8c7bf !important;
+    border-radius: 999px !important;
+}
+
+.machine-efficiency-scroll-active::-webkit-scrollbar-thumb:hover {
+    background: #98aba1 !important;
+}
+
+.machine-efficiency-scroll .dash-graph,
+.machine-efficiency-scroll .js-plotly-plot,
+.machine-efficiency-scroll .plot-container,
+.machine-efficiency-scroll .svg-container {
+    height: 285px !important;
+    min-height: 285px !important;
+}
+
+
+/* ---------------------------------------------------------
+   THREE PRODUCTION GROUP CARDS
+--------------------------------------------------------- */
+
+.production-group-row-cards {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 14px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    margin-top: 12px !important;
+}
+
+.production-group-card {
+    min-width: 0 !important;
+    height: 245px !important;
+    padding: 18px 20px !important;
+    background: #ffffff !important;
+    border: 1px solid #dde6e1 !important;
+    border-radius: 16px !important;
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.055) !important;
+}
+
+.production-group-header h3 {
+    margin: 0 !important;
+    color: #10231c !important;
+    font-size: 14px !important;
+    line-height: 19px !important;
+    font-weight: 900 !important;
+}
+
+.production-group-header p {
+    margin: 3px 0 0 !important;
+    color: #7c8c84 !important;
+    font-size: 10px !important;
+    line-height: 14px !important;
+    font-weight: 500 !important;
+}
+
+.production-group-bars {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 38px !important;
+    margin-top: 43px !important;
+}
+
+.production-group-row {
+    display: grid !important;
+    grid-template-columns: 54px minmax(0, 1fr) 68px !important;
+    align-items: center !important;
+    gap: 8px !important;
+    min-width: 0 !important;
+}
+
+.production-group-label {
+    color: #51635a !important;
+    font-size: 9px !important;
+    font-weight: 600 !important;
+    text-align: right !important;
+}
+
+.production-group-track {
+    width: 100% !important;
+    height: 46px !important;
+    position: relative !important;
+    overflow: hidden !important;
+    background: transparent !important;
+    border-radius: 6px !important;
+}
+
+.production-group-fill {
+    height: 100% !important;
+    min-width: 0 !important;
+    border-radius: 6px !important;
+    transition: width 0.25s ease !important;
+}
+
+.production-group-target-fill {
+    background: #cfe2d9 !important;
+}
+
+.production-group-actual-fill {
+    background: #22a06b !important;
+}
+
+.production-group-value {
+    color: #0f211a !important;
+    font-size: 10px !important;
+    font-weight: 900 !important;
+    white-space: nowrap !important;
+}
+
+
+/* ---------------------------------------------------------
+   RESPONSIVE BEHAVIOUR
+--------------------------------------------------------- */
+
+@media (max-width: 1250px) {
+    .dashboard-kpi-row-eight {
+        grid-template-columns:
+            minmax(190px, 1.3fr)
+            repeat(7, minmax(118px, 1fr)) !important;
+        gap: 7px !important;
+    }
+}
+
+@media (max-width: 1050px) {
+    .dashboard-kpi-row-eight {
+        overflow-x: auto !important;
+        grid-template-columns:
+            205px repeat(7, 145px) !important;
+        padding-bottom: 6px !important;
+    }
+
+    .production-group-row-cards {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+@media (max-width: 620px) {
+    .production-group-card {
+        height: 225px !important;
+        padding: 16px !important;
+    }
+
+    .production-group-row {
+        grid-template-columns: 48px minmax(0, 1fr) 58px !important;
+    }
+
+    .production-group-track {
+        height: 40px !important;
+    }
+}
+
+
+/* =========================================================
+   FINAL KPI BAR COLOR RULES
+   =========================================================
+   IMPORTANT:
+   - Machine Summary ONLY = multi-colour gradient
+   - Every other KPI = one colour family only
+   - Filled part has a soft fade at its END
+   ========================================================= */
+
+/* ---------------------------------------------------------
+   MACHINE SUMMARY
+   Multi-colour gradient ONLY on this card
+--------------------------------------------------------- */
+
+.machine-summary-gradient-track {
+    width: 100% !important;
+    height: 6px !important;
+    margin-top: auto !important;
+    overflow: hidden !important;
+
+    background: #edf2ef !important;
+    border-radius: 999px !important;
+}
+
+.machine-summary-gradient-fill {
+    width: 100% !important;
+    height: 100% !important;
+    display: block !important;
+
+    border-radius: 999px !important;
+
+    background: linear-gradient(
+        90deg,
+        #16a34a 0%,
+        #22a06b 18%,
+        #f59e0b 52%,
+        #fb923c 64%,
+        #8b5cf6 100%
+    ) !important;
+}
+
+/* Disable the old segmented/solid Machine Summary progress styling
+   if it still exists elsewhere in the stylesheet. */
+.machine-summary-progress-multi,
+.machine-summary-progress-segment {
+    display: none !important;
+}
+
+
+/* Footer dots */
+.machine-summary-footer-dot {
+    width: 6px !important;
+    height: 6px !important;
+    display: inline-block !important;
+    border-radius: 50% !important;
+    margin-right: 4px !important;
+    vertical-align: middle !important;
+}
+
+.machine-summary-dot-running {
+    background: #16a34a !important;
+}
+
+.machine-summary-dot-idle {
+    background: #f59e0b !important;
+}
+
+.machine-summary-dot-halt {
+    background: #8b5cf6 !important;
+}
+
+
+/* ---------------------------------------------------------
+   COMMON KPI PROGRESS TRACK
+--------------------------------------------------------- */
+
+.kpi-mini-visual,
+.operational-kpi-progress {
+    position: relative !important;
+    width: 100% !important;
+    height: 6px !important;
+
+    overflow: hidden !important;
+
+    background: #edf2ef !important;
+    border-radius: 999px !important;
+}
+
+
+/* ---------------------------------------------------------
+   RUNNING MACHINES
+   Single GREEN family only
+--------------------------------------------------------- */
+
+.kpi-card-green .kpi-mini-fill {
+    height: 100% !important;
+    display: block !important;
+
+    border-radius: 999px !important;
+
+    background: linear-gradient(
+        90deg,
+        #16a34a 0%,
+        #22c55e 72%,
+        rgba(34, 197, 94, 0.18) 100%
+    ) !important;
+}
+
+
+/* ---------------------------------------------------------
+   IDLE MACHINES
+   Single ORANGE family only
+--------------------------------------------------------- */
+
+.kpi-card-orange .kpi-mini-fill {
+    height: 100% !important;
+    display: block !important;
+
+    border-radius: 999px !important;
+
+    background: linear-gradient(
+        90deg,
+        #f59e0b 0%,
+        #fb923c 72%,
+        rgba(251, 146, 60, 0.18) 100%
+    ) !important;
+}
+
+
+/* ---------------------------------------------------------
+   HALT / STOP
+   Single PURPLE family only
+--------------------------------------------------------- */
+
+.kpi-card-purple .kpi-mini-fill {
+    height: 100% !important;
+    display: block !important;
+
+    border-radius: 999px !important;
+
+    background: linear-gradient(
+        90deg,
+        #7c3aed 0%,
+        #8b5cf6 72%,
+        rgba(139, 92, 246, 0.18) 100%
+    ) !important;
+}
+
+
+/* ---------------------------------------------------------
+   OPERATIONAL KPI COMMON FILL
+--------------------------------------------------------- */
+
+.operational-kpi-progress-fill {
+    height: 100% !important;
+    display: block !important;
+
+    border-radius: 999px !important;
+
+    transition: width 0.25s ease !important;
+}
+
+
+/* OEE
+   Single GREEN theme.
+   When OEE is N/A the inline width is 0%, so no fake bar is shown. */
+.operational-kpi-oee .operational-kpi-progress-fill {
+    background: linear-gradient(
+        90deg,
+        #15803d 0%,
+        #22c55e 72%,
+        rgba(34, 197, 94, 0.18) 100%
+    ) !important;
+}
+
+
+/* Performance
+   Single BLUE theme */
+.operational-kpi-performance .operational-kpi-progress-fill {
+    background: linear-gradient(
+        90deg,
+        #2563eb 0%,
+        #3b82f6 72%,
+        rgba(59, 130, 246, 0.18) 100%
+    ) !important;
+}
+
+
+/* Quality
+   Single GREEN theme.
+   N/A means width remains 0%. */
+.operational-kpi-quality .operational-kpi-progress-fill {
+    background: linear-gradient(
+        90deg,
+        #15803d 0%,
+        #22c55e 72%,
+        rgba(34, 197, 94, 0.18) 100%
+    ) !important;
+}
+
+
+/* Availability
+   Single PURPLE theme */
+.operational-kpi-availability .operational-kpi-progress-fill {
+    background: linear-gradient(
+        90deg,
+        #7c3aed 0%,
+        #8b5cf6 72%,
+        rgba(139, 92, 246, 0.18) 100%
+    ) !important;
+}
+
+
+/* ---------------------------------------------------------
+   N/A CARDS
+   No fake filled progress value
+--------------------------------------------------------- */
+
+.operational-kpi-na .operational-kpi-progress-fill {
+    width: 0% !important;
+}
+
+
+/* ---------------------------------------------------------
+   TOP EIGHT KPI ROW
+   Keep all eight cards visually aligned
+--------------------------------------------------------- */
+
+.dashboard-kpi-row-eight {
+    display: grid !important;
+    grid-template-columns:
+        minmax(190px, 1.30fr)
+        repeat(7, minmax(120px, 1fr)) !important;
+
+    gap: 8px !important;
+
+    width: 100% !important;
+    min-width: 0 !important;
+
+    margin-bottom: 12px !important;
+}
+
+.dashboard-kpi-row-eight > * {
+    min-width: 0 !important;
+    height: 174px !important;
+    min-height: 174px !important;
+    max-height: 174px !important;
+}
+
+
+/* On narrower screens preserve one row via horizontal scroll
+   instead of crushing the card content. */
+@media (max-width: 1100px) {
+    .dashboard-kpi-row-eight {
+        grid-template-columns:
+            195px
+            repeat(7, 142px) !important;
+
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+
+        padding-bottom: 6px !important;
+
+        scrollbar-width: thin !important;
+        scrollbar-color: #bdc9c3 #eef2f0 !important;
+    }
+}
+
+
+/* =========================================================
+   FINAL MACHINE EFFICIENCY LAYOUT FIX
+   10 VISIBLE + HORIZONTAL SCROLL
+   ========================================================= */
+
+.machine-efficiency-card {
+    width: 100% !important;
+    min-width: 0 !important;
+
+    height: 326px !important;
+    min-height: 326px !important;
+    max-height: 326px !important;
+
+    padding: 14px 18px 8px !important;
+
+    overflow: hidden !important;
+}
+
+.machine-efficiency-header {
+    margin: 0 0 1px !important;
+}
+
+.machine-efficiency-header .card-title {
+    margin: 0 !important;
+
+    font-size: 14px !important;
+    line-height: 18px !important;
+    font-weight: 800 !important;
+}
+
+.machine-efficiency-subtitle {
+    margin: 2px 0 0 !important;
+
+    font-size: 9px !important;
+    line-height: 13px !important;
+
+    color: #7a8a83 !important;
+}
+
+.machine-efficiency-chart-area {
+    width: 100% !important;
+    min-width: 0 !important;
+
+    height: 275px !important;
+    min-height: 275px !important;
+
+    overflow: hidden !important;
+}
+
+.machine-efficiency-scroll {
+    display: block !important;
+
+    width: 100% !important;
+    max-width: 100% !important;
+
+    height: 275px !important;
+
+    overflow-x: hidden !important;
+    overflow-y: hidden !important;
+
+    padding: 0 0 5px !important;
+}
+
+.machine-efficiency-scroll-active {
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+
+    scrollbar-width: thin !important;
+    scrollbar-color:
+        #aebdb5
+        #edf2ef !important;
+}
+
+.machine-efficiency-scroll-active::-webkit-scrollbar {
+    height: 7px !important;
+}
+
+.machine-efficiency-scroll-active::-webkit-scrollbar-track {
+    background: #edf2ef !important;
+    border-radius: 999px !important;
+}
+
+.machine-efficiency-scroll-active::-webkit-scrollbar-thumb {
+    background: #aebdb5 !important;
+    border-radius: 999px !important;
+}
+
+.machine-efficiency-scroll-active::-webkit-scrollbar-thumb:hover {
+    background: #91a49a !important;
+}
+
+/* IMPORTANT:
+   Do not force inner Plotly width to 100%.
+   The Python graph width is intentionally 100%, 120%, 230%, etc.
+   depending on machine count. */
+.machine-efficiency-scroll .dash-graph {
+    height: 265px !important;
+    min-height: 265px !important;
+
+    flex-shrink: 0 !important;
+}
+
+.machine-efficiency-scroll .js-plotly-plot,
+.machine-efficiency-scroll .plot-container,
+.machine-efficiency-scroll .svg-container {
+    height: 265px !important;
+    min-height: 265px !important;
+}
+
+
+/* =========================================================
+   PRODUCTION GROUP N/A CLEAN DISPLAY
+   ========================================================= */
+
+.production-group-value {
+    min-width: 58px !important;
+
+    color: #0f211a !important;
+
+    font-size: 10px !important;
+    line-height: 14px !important;
+    font-weight: 900 !important;
+
+    white-space: nowrap !important;
+}
+
+/* Empty Target/Actual data leaves the track empty.
+   N/A is shown at the right instead of "nan". */
+.production-group-fill[style*="width: 0.00%"] {
+    min-width: 0 !important;
+}
+
+
+/* Compact production group cards like the reference. */
+.production-group-card {
+    height: 230px !important;
+    min-height: 230px !important;
+    max-height: 230px !important;
+}
+
+.production-group-bars {
+    margin-top: 35px !important;
+    gap: 34px !important;
+}
+
+.production-group-track {
+    height: 42px !important;
+}
+
+
+/* =========================================================
+   FINAL MACHINE-WISE EFFICIENCY
+   Exactly 10 visible + horizontal scroll
+   ========================================================= */
+
+.machine-efficiency-card {
+    width: 100% !important;
+    min-width: 0 !important;
+
+    height: 350px !important;
+    min-height: 350px !important;
+    max-height: 350px !important;
+
+    padding: 14px 18px 8px !important;
+
+    overflow: hidden !important;
+}
+
+.machine-efficiency-header {
+    margin: 0 0 2px !important;
+}
+
+.machine-efficiency-header .card-title {
+    margin: 0 !important;
+
+    font-size: 14px !important;
+    line-height: 19px !important;
+    font-weight: 800 !important;
+}
+
+.machine-efficiency-subtitle {
+    margin: 2px 0 0 !important;
+
+    color: #7A8A83 !important;
+
+    font-size: 9px !important;
+    line-height: 13px !important;
+}
+
+.machine-efficiency-chart-area {
+    width: 100% !important;
+    min-width: 0 !important;
+
+    height: 295px !important;
+    min-height: 295px !important;
+
+    overflow: hidden !important;
+}
+
+
+/* Scroll viewport */
+.machine-efficiency-scroll {
+    display: block !important;
+
+    width: 100% !important;
+    max-width: 100% !important;
+
+    height: 295px !important;
+
+    overflow-x: hidden !important;
+    overflow-y: hidden !important;
+
+    padding: 0 0 8px !important;
+}
+
+
+/* Only show horizontal scroll when there are >10 machines */
+.machine-efficiency-scroll-active {
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+
+    scrollbar-width: thin !important;
+    scrollbar-color:
+        #AEBDB5
+        #EDF2EF !important;
+}
+
+
+/* Chrome / Edge scrollbar */
+.machine-efficiency-scroll-active::-webkit-scrollbar {
+    height: 8px !important;
+}
+
+.machine-efficiency-scroll-active::-webkit-scrollbar-track {
+    background: #EDF2EF !important;
+    border-radius: 999px !important;
+}
+
+.machine-efficiency-scroll-active::-webkit-scrollbar-thumb {
+    background: #AEBDB5 !important;
+    border-radius: 999px !important;
+}
+
+.machine-efficiency-scroll-active::-webkit-scrollbar-thumb:hover {
+    background: #91A49A !important;
+}
+
+
+/* CRITICAL:
+   Do NOT force graph width to 100%.
+   Python gives it a fixed pixel width based on machine count. */
+.machine-efficiency-scroll > .dash-graph {
+    flex: 0 0 auto !important;
+
+    height: 285px !important;
+    min-height: 285px !important;
+}
+
+
+/* Only height is controlled here.
+   Width must remain whatever Python set. */
+.machine-efficiency-scroll .js-plotly-plot,
+.machine-efficiency-scroll .plot-container,
+.machine-efficiency-scroll .svg-container {
+    height: 285px !important;
+    min-height: 285px !important;
+}
+
+
+/* Never apply these inside machine efficiency:
+   width:100% !important;
+   max-width:100% !important;
+   transform:scale(...);
+*/
+
+
+/* Responsive:
+   keep horizontal scroll instead of squeezing bars */
+@media (max-width: 900px) {
+    .machine-efficiency-card {
+        padding-left: 12px !important;
+        padding-right: 12px !important;
+    }
+}
+
+
+/* =========================================================
+   MACHINE-WISE EFFICIENCY - FINAL OVERRIDES
+   Keep the graph width driven by the viewport-based percentage
+   from components/charts.py.
+   ========================================================= */
+
+.machine-efficiency-chart-area {
+    width: 100% !important;
+    min-width: 0 !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+}
+
+.machine-efficiency-scroll {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+    overflow-y: hidden !important;
+}
+
+.machine-efficiency-scroll-active {
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+}
+
+.machine-efficiency-scroll > .dash-graph {
+    width: var(--machine-efficiency-width) !important;
+    min-width: var(--machine-efficiency-width) !important;
+    max-width: var(--machine-efficiency-width) !important;
+    flex: 0 0 auto !important;
+}
+
+.machine-efficiency-scroll .js-plotly-plot,
+.machine-efficiency-scroll .plot-container,
+.machine-efficiency-scroll .svg-container {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+}
+
+.machine-efficiency-scroll .xtick text {
+    white-space: normal !important;
+}
+
+/* Final chart-only sizing: the viewport shows ten equal-width categories,
+   while the Plotly canvas grows for additional machines. */
+.machine-efficiency-chart-area {
+    width: 100% !important;
+    min-width: 0 !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+}
+
+.machine-efficiency-scroll {
+    width: 100% !important;
+    max-width: none !important;
+    overflow: visible !important;
+}
+
+.machine-efficiency-scroll-active {
+    overflow-x: visible !important;
+}
+
+.machine-efficiency-scroll > .dash-graph {
+    width: var(--machine-efficiency-width) !important;
+    min-width: var(--machine-efficiency-width) !important;
+    max-width: var(--machine-efficiency-width) !important;
+    flex: 0 0 var(--machine-efficiency-width) !important;
+}
+
+.machine-efficiency-scroll > .dash-graph,
+.machine-efficiency-scroll > .dash-graph .js-plotly-plot,
+.machine-efficiency-scroll > .dash-graph .plot-container,
+.machine-efficiency-scroll > .dash-graph .svg-container {
+    width: 100% !important;
+}
+
+.machine-efficiency-scroll .xtick text {
+    text-anchor: middle !important;
 }

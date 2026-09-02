@@ -3,7 +3,8 @@ from dash import html
 from components.cards import (
     machine_summary_card,
     kpi_card,
-    production_kpi_card,
+    operational_kpi_card,
+    production_group_card,
 )
 
 from components.charts import (
@@ -11,6 +12,7 @@ from components.charts import (
     reason_donut,
     planned_vs_actual_chart,
     production_overview_chart,
+    machine_efficiency_chart,
 )
 
 from components.tables import (
@@ -18,16 +20,21 @@ from components.tables import (
     card_header,
     idle_machines_card_header,
     idle_machines_table,
+    halt_stop_machines_card_header,
+    halt_stop_machines_table,
 )
 
 from services.mock_data import (
     get_kpis,
     downtime_reasons,
     idle_machine_detail,
-    department_summary,
+    halt_stop_machine_detail,
+    machine_wise_efficiency,
     machine_status_trend,
     last_24h_production,
     production_daily_trend,
+    get_operational_kpis,
+    production_group_summary,
 )
 
 
@@ -262,6 +269,7 @@ def production_overview_card(production_daily):
 
 def overview_page(filters):
     kpis = get_kpis(filters)
+    operational_kpis = get_operational_kpis(filters)
 
     production = last_24h_production(
         filters
@@ -283,9 +291,28 @@ def overview_page(filters):
         filters
     )
 
-    dept_summary = department_summary(
+    halt_stop_detail = halt_stop_machine_detail(
         filters
     )
+
+    efficiency_df = machine_wise_efficiency(
+        filters
+    )
+
+    production_groups = production_group_summary(
+        filters
+    )
+
+    production_group_map = {}
+    if production_groups is not None and not production_groups.empty:
+        production_group_map = {
+            str(row["Group"]): {
+                "target": row.get("Target"),
+                "actual": row.get("Actual"),
+                "unit": row.get("Unit") or "Tons",
+            }
+            for _, row in production_groups.iterrows()
+        }
 
     return html.Div(
         className=(
@@ -295,114 +322,75 @@ def overview_page(filters):
         children=[
 
             # =================================================
-            # ROW 1 - 7 KPI CARDS
+            # ROW 1 - ALL 8 KPI CARDS IN ONE ROW
             # =================================================
             html.Div(
-                className=(
-                    "kpi-row "
-                    "kpi-row-six"
-                ),
+                className="dashboard-kpi-row-eight",
                 children=[
 
-                    # MACHINE SUMMARY
                     machine_summary_card(
                         kpis
                     ),
 
-                    # RUNNING
                     kpi_card(
                         "Running Machines",
-                        kpis.get(
-                            "running",
-                            0,
-                        ),
-                        (
-                            f'{kpis.get("running_pct", 0)}%'
-                            " of Total"
-                        ),
+                        kpis.get("running", 0),
+                        f'{kpis.get("running_pct", 0)}% of Total',
                         "▲",
                         "green",
-                        kpis.get(
-                            "running_pct",
-                            0,
-                        ),
+                        kpis.get("running_pct", 0),
                     ),
 
-                    # IDLE
                     kpi_card(
                         "Idle Machines",
-                        kpis.get(
-                            "idle",
-                            0,
-                        ),
-                        (
-                            f'{kpis.get("idle_pct", 0)}%'
-                            " of Total"
-                        ),
+                        kpis.get("idle", 0),
+                        f'{kpis.get("idle_pct", 0)}% of Total',
                         "◷",
                         "orange",
-                        kpis.get(
-                            "idle_pct",
-                            0,
-                        ),
+                        kpis.get("idle_pct", 0),
                     ),
 
-                    # HALT / STOP
                     kpi_card(
                         "Halt / Stop",
-                        kpis.get(
-                            "halt_stop",
-                            0,
-                        ),
-                        (
-                            f'{kpis.get("halt_stop_pct", 0)}%'
-                            " of Total"
-                        ),
+                        kpis.get("halt_stop", 0),
+                        f'{kpis.get("halt_stop_pct", 0)}% of Total',
                         "Ⅱ",
                         "purple",
-                        kpis.get(
-                            "halt_stop_pct",
-                            0,
-                        ),
-                    ),
-                    # OEE
-                    kpi_card(
-                        "Overall OEE",
-                        f'{kpis.get("oee", 0)}%',
-                        "Combined production target vs actual",
-                        "◔",
-                        "blue",
-                        kpis.get(
-                            "oee",
-                            0,
-                        ),
+                        kpis.get("halt_stop_pct", 0),
                     ),
 
-                    # PRODUCTION
-                    production_kpi_card(
-                        "Last 24 Hours Production",
-                        (
-                            f"{_format_number(production.get('actual'))} Tons"
-                            if production.get("actual") is not None
-                            else "N/A Tons"
-                        ),
-                        (
-                            f"Target: {_format_number(production.get('target'))} Tons"
-                            if production.get("target") is not None
-                            else "Target: N/A"
-                        ),
-                        (
-                            f"{production.get('achievement_pct'):.1f}% ({production.get('gap_label')})"
-                            if production.get("achievement_pct") is not None
-                            else production.get("gap_label", "Target Unavailable")
-                        ),
-                        production.get("achievement_pct") or 0,
+                    operational_kpi_card(
+                        "OEE",
+                        operational_kpis.get("oee"),
+                        "Availability × Performance × Quality",
+                        "oee",
+                    ),
+
+                    operational_kpi_card(
+                        "Performance",
+                        operational_kpis.get("performance"),
+                        "Actual production vs planned production",
+                        "performance",
+                    ),
+
+                    operational_kpi_card(
+                        "Quality",
+                        operational_kpis.get("quality"),
+                        "Good production vs total production",
+                        "quality",
+                    ),
+
+                    operational_kpi_card(
+                        "Availability",
+                        operational_kpis.get("availability"),
+                        "Runtime vs Halt / Stop downtime",
+                        "availability",
                     ),
                 ],
             ),
 
             # =================================================
-            # ROW 2 - 3 MAIN CHARTS
+            # ROW 3 - 3 MAIN CHARTS
             # =================================================
             html.Div(
                 className=(
@@ -471,27 +459,19 @@ def overview_page(filters):
             ),
 
             # =================================================
-            # ROW 3 - LOWER DASHBOARD
+            # ROW 4 - MACHINE DETAIL TABLES
             # =================================================
             html.Div(
-                className=(
-                    "overview-trend-row "
-                    "overview-trend-row-two"
-                ),
+                className="overview-machine-detail-row",
                 children=[
-
                     # IDLE MACHINES
                     html.Div(
-                        className=(
-                            "card "
-                            "overview-trend-card"
-                        ),
+                        className="card machine-detail-card idle-detail-card",
                         children=[
                             idle_machines_card_header(
                                 "Idle Machines",
                                 "Machines available with no active running job",
                             ),
-
                             idle_machines_table(
                                 idle_detail,
                                 max_rows=None,
@@ -499,22 +479,103 @@ def overview_page(filters):
                         ],
                     ),
 
-                    # DEPARTMENT SUMMARY
+                    # HALT / STOP MACHINES
                     html.Div(
-                        className=(
-                            "card "
-                            "overview-trend-card"
-                        ),
+                        className="card machine-detail-card halt-stop-detail-card",
                         children=[
-                            card_header(
-                                "Department Summary"
+                            halt_stop_machines_card_header(
+                                "Halt / Stop Machines",
+                                "Machines with temporarily interrupted active jobs",
                             ),
-
-                            data_table(
-                                dept_summary,
-                                max_rows=6,
+                            halt_stop_machines_table(
+                                halt_stop_detail,
+                                max_rows=None,
                             ),
                         ],
+                    ),
+                ],
+            ),
+
+            # =================================================
+            # ROW 5 - FULL-WIDTH MACHINE-WISE EFFICIENCY
+            # =================================================
+            html.Div(
+                className="card machine-efficiency-card",
+                children=[
+                    html.Div(
+                        className="machine-efficiency-header",
+                        children=[
+                            html.H3(
+                                "Machine-wise Efficiency",
+                                className="card-title",
+                            ),
+                            html.P(
+                                "Actual production vs planned quantity by machine",
+                                className="machine-efficiency-subtitle",
+                            ),
+                        ],
+                    ),
+                    html.Div(
+                        className="machine-efficiency-chart-area",
+                        children=[
+                            machine_efficiency_chart(efficiency_df)
+                        ],
+                    ),
+                ],
+            ),
+
+            # =================================================
+            # ROW 6 - PRODUCTION GROUP TARGET VS ACTUAL
+            # =================================================
+            html.Div(
+                className="production-group-row-cards",
+                children=[
+                    production_group_card(
+                        "Extruders",
+                        production_group_map.get(
+                            "Extruders",
+                            {},
+                        ).get("target"),
+                        production_group_map.get(
+                            "Extruders",
+                            {},
+                        ).get("actual"),
+                        production_group_map.get(
+                            "Extruders",
+                            {},
+                        ).get("unit", "Tons"),
+                    ),
+
+                    production_group_card(
+                        "Bunchers & Braiders",
+                        production_group_map.get(
+                            "Bunchers & Braiders",
+                            {},
+                        ).get("target"),
+                        production_group_map.get(
+                            "Bunchers & Braiders",
+                            {},
+                        ).get("actual"),
+                        production_group_map.get(
+                            "Bunchers & Braiders",
+                            {},
+                        ).get("unit", "Tons"),
+                    ),
+
+                    production_group_card(
+                        "Other Lines",
+                        production_group_map.get(
+                            "Other Lines",
+                            {},
+                        ).get("target"),
+                        production_group_map.get(
+                            "Other Lines",
+                            {},
+                        ).get("actual"),
+                        production_group_map.get(
+                            "Other Lines",
+                            {},
+                        ).get("unit", "Tons"),
                     ),
                 ],
             ),

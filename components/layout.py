@@ -2,37 +2,6 @@ from dash import html, dcc
 
 
 # =========================================================
-# DATE RANGE
-# =========================================================
-
-def date_range_filter():
-    return html.Div(
-        className="filter-box popup-filter-box date-range-compact-box",
-        children=[
-            html.Label("Date Range"),
-            html.Div(
-                className="date-filter-control",
-                children=[
-                    html.Span(className="date-filter-icon"),
-                    dcc.DatePickerRange(
-                        id="dashboard-date-range",
-                        start_date=None,
-                        end_date=None,
-                        start_date_placeholder_text="Start Date",
-                        end_date_placeholder_text="End Date",
-                        display_format="DD MMM YYYY",
-                        minimum_nights=0,
-                        clearable=False,
-                        reopen_calendar_on_clear=True,
-                        className="custom-date-range-picker",
-                    ),
-                ],
-            ),
-        ],
-    )
-
-
-# =========================================================
 # SEARCH MACHINE
 # =========================================================
 
@@ -44,7 +13,9 @@ def search_machine_filter():
             html.Div(
                 className="search-input-wrapper",
                 children=[
-                    html.Span(className="search-leading-icon icon-search"),
+                    html.Span(
+                        className="search-leading-icon icon-search",
+                    ),
                     dcc.Input(
                         id="machine-search",
                         type="text",
@@ -67,18 +38,24 @@ def department_filter(departments):
     departments = departments or ["All"]
 
     return html.Div(
-        className="filter-box popup-filter-box department-filter-box",
+        className="filter-box popup-filter-box normal-filter-box department-filter-box",
         children=[
             html.Label("Department"),
             html.Div(
                 className="department-filter-control",
                 children=[
-                    html.Span(className="department-filter-icon"),
+                    html.Span(
+                        className="department-filter-icon",
+                    ),
                     dcc.Dropdown(
                         id="department-filter",
                         options=[
                             {
-                                "label": "All Departments" if department == "All" else str(department),
+                                "label": (
+                                    "All Departments"
+                                    if department == "All"
+                                    else str(department)
+                                ),
                                 "value": department,
                             }
                             for department in departments
@@ -104,18 +81,24 @@ def machine_type_filter(machine_types):
     machine_types = machine_types or ["All"]
 
     return html.Div(
-        className="filter-box popup-filter-box machine-type-filter-box",
+        className="filter-box popup-filter-box normal-filter-box machine-type-filter-box",
         children=[
             html.Label("Machine Type"),
             html.Div(
                 className="dropdown-with-icon",
                 children=[
-                    html.Span(className="filter-leading-icon icon-filter"),
+                    html.Span(
+                        className="filter-leading-icon icon-filter",
+                    ),
                     dcc.Dropdown(
                         id="machine-type-filter",
                         options=[
                             {
-                                "label": "All Machine Types" if machine_type == "All" else str(machine_type),
+                                "label": (
+                                    "All Machine Types"
+                                    if machine_type == "All"
+                                    else str(machine_type)
+                                ),
                                 "value": machine_type,
                             }
                             for machine_type in machine_types
@@ -134,13 +117,45 @@ def machine_type_filter(machine_types):
 
 
 # =========================================================
-# HEADER
+# DATE RANGE
+# =========================================================
+
+def date_range_filter():
+    return html.Div(
+        className="filter-box popup-filter-box date-range-compact-box",
+        children=[
+            html.Label("Date Range"),
+            html.Div(
+                className="date-filter-control",
+                children=[
+                    html.Span(
+                        className="date-filter-icon",
+                    ),
+                    dcc.DatePickerRange(
+                        id="dashboard-date-range",
+                        start_date=None,
+                        end_date=None,
+                        display_format="DD MMM YYYY",
+                        start_date_placeholder_text="Start Date",
+                        end_date_placeholder_text="End Date",
+                        minimum_nights=0,
+                        clearable=False,
+                        reopen_calendar_on_clear=True,
+                        className="custom-date-range-picker",
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+# =========================================================
+# HEADER / TOPBAR
 # =========================================================
 
 def topbar(filter_options):
     filter_options = filter_options or {}
-    departments = filter_options.get("departments", ["All"])
-    machine_types = filter_options.get("machine_types", ["All"])
+
 
     return html.Div(
         className="dashboard-header prototype-header",
@@ -148,6 +163,7 @@ def topbar(filter_options):
             html.Div(
                 className="prototype-header-row",
                 children=[
+                    # BRAND
                     html.Div(
                         className="header-brand prototype-brand",
                         children=[
@@ -159,17 +175,62 @@ def topbar(filter_options):
                                 className="header-title-text",
                                 children=[
                                     html.H1("Cable Flow Dashboard"),
-                                    html.P("Real-time Overview of Machine Operations"),
+                                    html.P(
+                                        "Real-time Overview of Machine Operations"
+                                    ),
                                 ],
                             ),
                         ],
                     ),
+
+                    # GLOBAL SEARCH
+                    # Uses the existing machine-search callback ID, but the
+                    # backend search also matches Department and Machine Type.
+                    html.Div(
+                        className="header-global-search",
+                        children=[
+                            html.Span(
+                                className="header-global-search-icon icon-search",
+                            ),
+                            dcc.Input(
+                                id="machine-search",
+                                type="text",
+                                placeholder="Search Machine / Department...",
+                                value="",
+                                debounce=True,
+                                className="header-global-search-input",
+                            ),
+                        ],
+                    ),
+
+                    # PLANT QUICK FILTER
+                    dcc.RadioItems(
+                        id="plant-filter",
+                        options=[
+                            {"label": "All Plants", "value": "All"},
+                            {"label": "GCFA", "value": "GCFA"},
+                            {"label": "PCF", "value": "PCF"},
+                            {"label": "GCFB", "value": "GCFB"},
+                        ],
+                        value="All",
+                        inline=True,
+                        className="plant-segmented-control",
+                        inputClassName="plant-segmented-input",
+                        labelClassName="plant-segmented-label",
+                    ),
+
+                    # HEADER ACTIONS
                     html.Div(
                         className="prototype-header-controls",
                         children=[
                             html.Button(
                                 [
-                                    html.Span(className="action-button-icon icon-refresh-dark"),
+                                    html.Span(
+                                        className=(
+                                            "action-button-icon "
+                                            "icon-refresh-dark"
+                                        ),
+                                    ),
                                     html.Span("Refresh Data"),
                                 ],
                                 id="refresh-btn",
@@ -178,7 +239,12 @@ def topbar(filter_options):
                             ),
                             html.Button(
                                 [
-                                    html.Span(className="action-button-icon icon-filter-green"),
+                                    html.Span(
+                                        className=(
+                                            "action-button-icon "
+                                            "icon-filter-green"
+                                        ),
+                                    ),
                                     html.Span("Filters"),
                                 ],
                                 id="filters-toggle-btn",
@@ -190,8 +256,7 @@ def topbar(filter_options):
                 ],
             ),
 
-            # Floating filter card. It is absolutely positioned by CSS so it
-            # does not push the dashboard content down when opened.
+            # FLOATING FILTER POPUP
             html.Div(
                 id="advanced-filters",
                 className="advanced-filters-panel filter-popover",
@@ -202,12 +267,15 @@ def topbar(filter_options):
                         children=[
                             html.Div(
                                 children=[
-                                    html.H3("Filters", className="filter-popover-title"),
+                                    html.H3(
+                                        "Filters",
+                                        className="filter-popover-title",
+                                    ),
                                     html.P(
                                         "Refine dashboard data",
                                         className="filter-popover-subtitle",
                                     ),
-                                ]
+                                ],
                             ),
                             html.Button(
                                 "×",
@@ -218,21 +286,31 @@ def topbar(filter_options):
                             ),
                         ],
                     ),
+
+                    # FILTER POPUP ORDER:
+                    # 1. Department
+                    # 2. Machine Type
+                    # 3. Date Range
+                    #
+                    # Search Machine / Department is now in the main header.
                     html.Div(
-                        className="filter-popover-body",
+                        className="filter-popover-body filter-popover-body-column",
                         children=[
                             date_range_filter(),
-                            department_filter(departments),
-                            machine_type_filter(machine_types),
-                            search_machine_filter(),
                         ],
                     ),
+
                     html.Div(
                         className="filter-popover-footer",
                         children=[
                             html.Button(
                                 [
-                                    html.Span(className="action-button-icon icon-reset"),
+                                    html.Span(
+                                        className=(
+                                            "action-button-icon "
+                                            "icon-reset"
+                                        ),
+                                    ),
                                     html.Span("Reset Filters"),
                                 ],
                                 id="date-reset-btn",

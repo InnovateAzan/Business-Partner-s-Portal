@@ -176,6 +176,91 @@ def idle_machines_table(df, max_rows=None):
         ],
     )
 
+
+def halt_stop_machines_card_header(
+    title="Halt / Stop Machines",
+    subtitle="Machines with temporarily interrupted active jobs",
+):
+    return html.Div(
+        className="halt-stop-card-header",
+        children=[
+            html.Div(
+                className="halt-stop-card-icon",
+                children=html.Span(className="halt-stop-card-icon-glyph"),
+            ),
+            html.Div(
+                className="halt-stop-card-copy",
+                children=[
+                    html.H3(title, className="halt-stop-card-title"),
+                    html.P(subtitle, className="halt-stop-card-subtitle"),
+                ],
+            ),
+        ],
+    )
+
+
+def halt_stop_machines_table(df, max_rows=None):
+    if df is None or df.empty:
+        return html.Div("No data available", className="empty-state")
+
+    df = df.copy()
+    if max_rows:
+        df = df.head(max_rows)
+
+    columns = [
+        c for c in df.columns
+        if c in {"Machine Name", "Since From", "Duration", "Reason"}
+    ]
+    if not columns:
+        columns = list(df.columns)
+
+    header_map = {
+        "Machine Name": "Machine",
+        "Since From": "Halt / Stop Since",
+        "Duration": "Duration",
+        "Reason": "Reason",
+    }
+
+    def _render_cell(col, value):
+        col_lower = str(col).lower()
+        if col_lower in {"machine name", "machine"}:
+            return html.Span(
+                [
+                    html.Span("●", className="halt-stop-machine-dot"),
+                    html.Span(_safe_text(value), className="halt-stop-machine-name"),
+                ],
+                className="halt-stop-machine-cell",
+            )
+        if col_lower in {"since from", "halt / stop since", "halt stop since"}:
+            return html.Span(_format_idle_since(value), className="halt-stop-since-text")
+        if col_lower in {"duration", "downtime"}:
+            return html.Span(_safe_text(value), className="halt-stop-duration-pill")
+        if col_lower == "reason":
+            return html.Span(_safe_text(value), className="halt-stop-reason-text")
+        return _safe_text(value)
+
+    return html.Div(
+        className="table-wrapper compact-table-wrapper halt-stop-table-wrapper",
+        children=[
+            html.Table(
+                className="data-table halt-stop-machine-table",
+                children=[
+                    html.Thead(
+                        html.Tr([html.Th(header_map.get(col, col)) for col in columns])
+                    ),
+                    html.Tbody(
+                        [
+                            html.Tr(
+                                [html.Td(_render_cell(col, row[col])) for col in columns]
+                            )
+                            for _, row in df.iterrows()
+                        ]
+                    ),
+                ],
+            )
+        ],
+    )
+
 def status_badge(status):
     return html.Span(
         _safe_text(status),

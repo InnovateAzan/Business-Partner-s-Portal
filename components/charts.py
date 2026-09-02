@@ -1,4 +1,5 @@
-from dash import dcc
+import pandas as pd
+from dash import html, dcc
 import plotly.graph_objects as go
 
 
@@ -841,3 +842,328 @@ def planned_vs_actual_chart(df):
     )
 
     return _graph(fig)
+
+
+# =========================================================
+# MACHINE-WISE EFFICIENCY
+# =========================================================
+
+def machine_efficiency_chart(df):
+    """
+    Machine-wise Efficiency chart.
+
+    DB/calculation logic stays unchanged upstream:
+        SUM(MAX(actual_executed_qty) per job)
+        / SUM(total_qty)
+        * 100
+
+    UI:
+        >= 80%       Green
+        60-79.99%    Blue
+        40-59.99%    Yellow/Orange
+        < 40%         Red
+
+    Exactly 10 machine slots are visible at one time.
+    Remaining machines are available through horizontal scroll.
+    """
+
+    if df is None or df.empty:
+        return _empty_chart(
+            message="Machine efficiency unavailable",
+            height=285,
+        )
+
+    required = {
+        "Machine Name",
+        "Efficiency %",
+    }
+
+    if not required.issubset(df.columns):
+        return _empty_chart(
+            message="Machine efficiency unavailable",
+            height=285,
+        )
+
+    chart_df = df.copy()
+
+    chart_df["Machine Name"] = (
+        chart_df["Machine Name"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+
+    chart_df["Efficiency %"] = pd.to_numeric(
+        chart_df["Efficiency %"],
+        errors="coerce",
+    )
+
+    chart_df = (
+        chart_df[
+            chart_df["Machine Name"].ne("")
+        ]
+        .dropna(subset=["Efficiency %"])
+        .copy()
+    )
+
+    if chart_df.empty:
+        return _empty_chart(
+            message="Machine efficiency unavailable",
+            height=285,
+        )
+
+    def wrap_machine_name(name):
+        """
+        Wrap long machine names into at most two horizontal lines.
+
+        The split favors natural separators so labels stay readable while
+        remaining compact in the fixed machine slot.
+        """
+
+        name = str(name).strip()
+
+        if not name:
+            return name
+
+        if len(name) <= 12:
+            return name
+
+        tokens = [
+            token for token in name.replace("/", " ").split()
+            if token
+        ]
+
+        if len(tokens) >= 2:
+            head = " ".join(tokens[:-1]).strip()
+            tail = tokens[-1].strip()
+
+            if head and tail:
+                return f"{head}<br>{tail}"
+
+        hyphen_parts = [
+            part for part in name.split("-")
+            if part
+        ]
+
+        if len(hyphen_parts) >= 2:
+            pivot = max(1, len(hyphen_parts) // 2)
+            first_line = "-".join(hyphen_parts[:pivot]).strip("-")
+            second_line = "-".join(hyphen_parts[pivot:]).strip("-")
+
+            if first_line and second_line:
+                return f"{first_line}<br>{second_line}"
+
+        pivot = max(4, min(len(name) - 4, len(name) // 2))
+
+        return f"{name[:pivot].rstrip()}<br>{name[pivot:].lstrip()}"
+
+    # Highest efficiency first.
+    chart_df = (
+        chart_df
+        .sort_values(
+            by=[
+                "Efficiency %",
+                "Machine Name",
+            ],
+            ascending=[
+                False,
+                True,
+            ],
+        )
+        .reset_index(drop=True)
+    )
+
+    chart_df["Machine Label"] = (
+        chart_df["Machine Name"]
+        .map(wrap_machine_name)
+    )
+
+    def get_bar_color(value):
+        value = float(value)
+
+        if value >= 80:
+            return "#22A06B"
+
+        if value >= 60:
+            return "#3F84C5"
+
+        if value >= 40:
+            return "#F3A936"
+
+        return "#EF5350"
+
+    bar_colors = [
+        get_bar_color(value)
+        for value in chart_df["Efficiency %"]
+    ]
+
+    max_efficiency = float(
+        chart_df["Efficiency %"].max()
+    )
+
+    y_max = max(
+        110.0,
+        max_efficiency + 12.0,
+    )
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Bar(
+            x=chart_df["Machine Name"],
+            y=chart_df["Efficiency %"],
+
+            width=0.56,
+
+            marker=dict(
+                color=bar_colors,
+                line=dict(width=0),
+            ),
+
+            text=[
+                f"{float(value):.1f}%"
+                for value in chart_df["Efficiency %"]
+            ],
+
+            textposition="outside",
+
+            textfont=dict(
+                size=10,
+                color="#0F172A",
+            ),
+
+            cliponaxis=False,
+
+            customdata=chart_df["Machine Name"],
+
+            hovertemplate=(
+                "<b>%{customdata}</b><br>"
+                "Efficiency: %{y:.2f}%"
+                "<extra></extra>"
+            ),
+        )
+    )
+
+    fig.update_layout(
+        height=285,
+        autosize=True,
+
+        margin=dict(
+            l=34,
+            r=18,
+            t=30,
+            b=62,
+        ),
+
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+
+        showlegend=False,
+
+        bargap=0.34,
+
+        font=dict(
+            family="Inter, Arial, sans-serif",
+            color="#172033",
+        ),
+
+        xaxis=dict(
+            title=None,
+            showgrid=False,
+            zeroline=False,
+            type="category",
+            tickmode="array",
+
+            tickangle=0,
+
+            tickfont=dict(
+                size=9,
+                color="#6F7F78",
+            ),
+
+            automargin=True,
+            fixedrange=True,
+
+            categoryorder="array",
+            categoryarray=(
+                chart_df["Machine Name"]
+                .tolist()
+            ),
+            tickvals=chart_df["Machine Name"].tolist(),
+            ticktext=chart_df["Machine Label"].tolist(),
+        ),
+
+        yaxis=dict(
+            title=None,
+
+            range=[
+                0,
+                y_max,
+            ],
+
+            showgrid=True,
+            gridcolor="#E7EEEA",
+            gridwidth=1,
+
+            zeroline=False,
+
+            showticklabels=True,
+            tickvals=[0, 25, 50, 75, 100],
+            ticktext=[
+                "0%",
+                "25%",
+                "50%",
+                "75%",
+                "100%",
+            ],
+
+            tickfont=dict(
+                size=9,
+                color="#66756E",
+            ),
+
+            fixedrange=True,
+        ),
+    )
+
+    machine_count = len(chart_df)
+
+    visible_count = 10
+    graph_width_pct = 100 if machine_count <= visible_count else round(
+        (machine_count / visible_count) * 100,
+        2,
+    )
+
+    graph = dcc.Graph(
+        figure=fig,
+
+        config={
+            "displayModeBar": False,
+            "responsive": True,
+        },
+
+        responsive=True,
+
+        style={
+            "width": "100%",
+            "minWidth": "100%",
+            "maxWidth": "100%",
+            "height": "285px",
+            "flexShrink": "0",
+        },
+    )
+
+    return html.Div(
+        className=(
+            "machine-efficiency-scroll"
+            + (
+                " machine-efficiency-scroll-active"
+                if machine_count > visible_count
+                else ""
+            )
+        ),
+        style={
+            "--machine-efficiency-width": f"{graph_width_pct}%",
+        },
+        children=[graph],
+    )

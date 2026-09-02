@@ -1,9 +1,14 @@
 import pandas as pd
 
 from services.api_service import (
+    DB_SCHEMA,
     fetch_dashboard_metadata,
     fetch_production_targets,
+    fetch_machine_efficiency,
+    fetch_production_groups,
+    fetch_operational_kpis,
     clear_api_cache,
+    _get_connection,
 )
 
 
@@ -50,6 +55,7 @@ def _normalize_filters(filters):
     return {
         "start_date": filters.get("start_date"),
         "end_date": filters.get("end_date"),
+        "plant": _clean(filters.get("plant")),
         "department": _clean(filters.get("department")),
         "machine_type": _clean(filters.get("machine_type")),
         "search_text": str(filters.get("search_text") or "").strip(),
@@ -138,6 +144,111 @@ def _get_reference_time(df, filters=None):
     return pd.Timestamp.now(tz="UTC")
 
 
+def _normalize_plant_value(value):
+    text = str(value or "").strip().upper()
+    compact = "".join(ch for ch in text if ch.isalnum())
+
+    if compact in {"ALL", "ALLPLANTS", "NONE", "NAN", ""}:
+        return "All"
+    # GCFA/legacy NCFA must be checked before the broader GCFB/GCF rule.
+    if "GCFA" in compact or "NCFA" in compact or compact.startswith("NCF"):
+        return "GCFA"
+    if "GCFB" in compact or compact == "GCF":
+        return "GCFB"
+    if "PCF" in compact:
+        return "PCF"
+    return text
+
+
+def _normalize_department_value(value):
+    text = str(value or "").strip().upper()
+    if text in {"ALL", "ALL PLANTS", "ALLPLANTS", "NONE", "NAN", ""}:
+        return "All"
+    return text
+
+
+def _should_filter_department(plant):
+    selected_plant = str(plant or "All").strip().upper()
+    return selected_plant not in {"ALL", "ALL PLANTS", "ALLPLANTS", ""}
+
+
+def _machine_master_dataframe(plant="All"):
+    conn = None
+    try:
+        conn = _get_connection()
+        query = f"""
+            SELECT
+                mm.id AS "Machine ID",
+                COALESCE(NULLIF(BTRIM(mm.machine_name), ''), CAST(mm.id AS TEXT)) AS "Machine Name",
+                TRIM(UPPER(mm.department)) AS "Department",
+                TRIM(COALESCE(mm.machine_type, '')) AS "Machine Type"
+            FROM {DB_SCHEMA}.job_machines_master mm
+            WHERE mm.id IS NOT NULL
+        """
+        params = []
+        normalized_plant = _normalize_plant_value(plant)
+        if _should_filter_department(plant):
+            query += " AND TRIM(UPPER(mm.department)) = %s"
+            params.append(normalized_plant)
+
+        df = pd.read_sql_query(query, conn, params=params)
+        columns = ["Machine ID", "Machine Name", "Department", "Machine Type"]
+        if df.empty:
+            return pd.DataFrame(columns=columns)
+
+        df["Machine ID"] = pd.to_numeric(df["Machine ID"], errors="coerce").fillna(0).astype(int)
+        df["Machine Name"] = df["Machine Name"].fillna("").astype(str).str.strip()
+        df["Department"] = df["Department"].fillna("").astype(str).str.strip().str.upper()
+        df["Machine Type"] = df["Machine Type"].fillna("").astype(str).str.strip()
+        print("Machine Scope ->")
+        print(f"Plant: {normalized_plant}")
+        print(f"Machine Count: {int(df['Machine ID'].nunique())}")
+        return df[df["Machine ID"] > 0].reset_index(drop=True)
+    except Exception as error:
+        print(f"Error reading job_machines_master: {error}")
+        return pd.DataFrame(columns=["Machine ID", "Machine Name", "Department", "Machine Type"])
+    finally:
+        if conn:
+            conn.close()
+
+
+def _latest_event_rows(filters=None):
+    event_filters = dict(_normalize_filters(filters))
+    event_filters["plant"] = "All"
+    event_filters["department"] = "All"
+    event_filters["machine_type"] = "All"
+    event_filters["search_text"] = ""
+    df = _api_dataframe(event_filters, apply_dates=False)
+    if df.empty:
+        return pd.DataFrame()
+    df = df.sort_values(
+        ["Machine ID", "Status From", "Updated At", "Job ID"],
+        ascending=[True, False, False, False],
+        na_position="last",
+    )
+    return df.drop_duplicates(subset=["Machine ID"], keep="first").copy()
+
+
+def _infer_plant_from_row(row):
+    # Keep plant resolution aligned to the authoritative department field.
+    department = row.get("Department", "")
+    plant = row.get("Plant", "")
+
+    normalized_department = _normalize_plant_value(department)
+    if normalized_department != "All":
+        return normalized_department
+
+    return _normalize_plant_value(plant)
+
+
+def _plant_matches_work_center(plant, work_center):
+    plant = _normalize_plant_value(plant)
+    if plant == "All":
+        return True
+    wc = _normalize_plant_value(work_center)
+    return wc == plant
+
+
 def _api_records(filters=None, apply_dates=True):
     filters = _normalize_filters(filters)
     records = fetch_dashboard_metadata(
@@ -165,6 +276,7 @@ def _api_dataframe(filters=None, apply_dates=True):
             "processName": "Process Name",
             "machineCode": "Machine Name",
             "dept": "Department",
+            "plant": "Plant",
             "createdAt": "Status From",
             "updatedAt": "Updated At",
             "status": "Status Code",
@@ -187,6 +299,7 @@ def _api_dataframe(filters=None, apply_dates=True):
         "Machine Name": "",
         "Process Name": "",
         "Department": "",
+        "Plant": "",
         "Status From": pd.NaT,
         "Updated At": pd.NaT,
         "Status Code": 0,
@@ -226,6 +339,10 @@ def _api_dataframe(filters=None, apply_dates=True):
     df["Process Name"] = df["Process Name"].fillna("").astype(str)
     df["Machine Type"] = df["Process Name"].apply(_pretty_process_name)
     df["Department"] = df["Department"].fillna("").astype(str).str.strip()
+    df["Plant"] = df["Plant"].fillna("").astype(str).str.strip()
+    inferred_plant = df.apply(_infer_plant_from_row, axis=1)
+    explicit_plant = df["Plant"].apply(_normalize_plant_value)
+    df["Plant"] = explicit_plant.where(explicit_plant.ne("All"), inferred_plant)
     df["Planned Qty Source"] = df["Planned Qty Source"].fillna("").astype(str).str.strip()
     df["Production UOM"] = df["Production UOM"].fillna("").astype(str).str.strip()
     df["Status"] = df["Status Code"].apply(_normalize_status_code)
@@ -244,6 +361,7 @@ def _apply_local_filters(df, filters=None, apply_dates=True):
     filters = _normalize_filters(filters)
     df = df.copy()
 
+    plant = _normalize_plant_value(filters.get("plant", "All"))
     department = str(filters["department"] or "All").strip()
     machine_type = str(filters["machine_type"] or "All").strip()
     search_text = str(filters["search_text"] or "").strip().lower()
@@ -255,10 +373,22 @@ def _apply_local_filters(df, filters=None, apply_dates=True):
         filters["start_date"] = None
         filters["end_date"] = None
 
+    if plant != "All":
+        if "Department" in df.columns and df["Department"].astype(str).str.strip().ne("").any():
+            df = df[df["Department"].astype(str).apply(_normalize_plant_value).eq(plant)]
+        elif "Plant" in df.columns:
+            df = df[df["Plant"].astype(str).apply(_normalize_plant_value).eq(plant)]
+
     # Only filter Department/Machine Type when metadata exists in the dataset.
     if department != "All" and "Department" in df.columns:
         if df["Department"].astype(str).str.strip().ne("").any():
-            df = df[df["Department"].astype(str).str.strip().eq(department)]
+            normalized_department = _normalize_department_value(department)
+            df = df[
+                df["Department"]
+                .astype(str)
+                .apply(_normalize_department_value)
+                .eq(normalized_department)
+            ]
 
     if machine_type != "All" and "Machine Type" in df.columns:
         if df["Machine Type"].astype(str).str.strip().ne("").any():
@@ -268,6 +398,7 @@ def _apply_local_filters(df, filters=None, apply_dates=True):
         search_cols = [
             "Machine Name",
             "Machine ID",
+            "Plant",
             "Department",
             "Machine Type",
             "Status",
@@ -288,19 +419,51 @@ def _apply_local_filters(df, filters=None, apply_dates=True):
 
 
 def _latest_machine_rows(filters=None):
-    df = _api_dataframe(filters, apply_dates=False)
-    if df.empty:
+    filters = _normalize_filters(filters)
+    master = _machine_master_dataframe(filters.get("plant", "All"))
+    if master.empty:
         return pd.DataFrame()
 
-    # Latest state per machine is what KPI cards must use.
-    df = df.sort_values(
-        ["Machine ID", "Status From", "Updated At", "Job ID"],
-        ascending=[True, False, False, False],
-        na_position="last",
-    )
-    latest = df.drop_duplicates(subset=["Machine ID"], keep="first").copy()
+    latest = _latest_event_rows(filters)
+    if latest.empty:
+        master["Status"] = "Idle"
+        master["Status Code"] = 0
+        master["Reason"] = ""
+        master["Process Name"] = ""
+        if "Machine Type" not in master.columns:
+            master["Machine Type"] = ""
+        master["Status From"] = pd.NaT
+        master["Updated At"] = pd.NaT
+        master["Job ID"] = 0
+        master["Actual Qty"] = 0
+        master["Planned Qty"] = 0
+        master["Interface Log"] = ""
+        master["Plant"] = master["Department"]
+        return master
 
-    return latest
+    merged = master.merge(
+        latest,
+        on=["Machine ID"],
+        how="left",
+        suffixes=("", "_event"),
+    )
+
+    for col in ["Status", "Reason", "Process Name", "Interface Log", "Plant"]:
+        if col in merged.columns:
+            merged[col] = merged[col].fillna("")
+
+    merged["Status"] = merged.get("Status", pd.Series(index=merged.index, dtype=object)).replace("", "Idle").fillna("Idle")
+    merged["Status Code"] = pd.to_numeric(merged.get("Status Code", 0), errors="coerce").fillna(0)
+    merged["Status From"] = pd.to_datetime(merged.get("Status From"), errors="coerce", utc=True)
+    merged["Updated At"] = pd.to_datetime(merged.get("Updated At"), errors="coerce", utc=True)
+    merged["Actual Qty"] = pd.to_numeric(merged.get("Actual Qty", 0), errors="coerce").fillna(0)
+    merged["Planned Qty"] = pd.to_numeric(merged.get("Planned Qty", 0), errors="coerce").fillna(0)
+    merged["Process Name"] = merged.get("Process Name", "").fillna("")
+    event_machine_type = merged["Process Name"].apply(_pretty_process_name)
+    merged["Machine Type"] = merged["Machine Type"].fillna("").astype(str).str.strip()
+    merged["Machine Type"] = merged["Machine Type"].where(merged["Machine Type"].ne(""), event_machine_type)
+    merged["Plant"] = merged["Department"]
+    return _apply_local_filters(merged, filters, apply_dates=False)
 
 
 def _add_status_duration(df, filters=None):
@@ -350,9 +513,17 @@ def machines_data(filters=None):
 
 
 def downtime_events(filters=None):
-    df = _api_dataframe(filters, apply_dates=True)
+    event_filters = dict(_normalize_filters(filters))
+    event_filters["plant"] = "All"
+    event_filters["department"] = "All"
+    event_filters["machine_type"] = "All"
+    df = _api_dataframe(event_filters, apply_dates=True)
     if df.empty:
         return pd.DataFrame()
+    plant = _normalize_filters(filters).get("plant", "All")
+    allowed_ids = set(_machine_master_dataframe(plant)["Machine ID"].tolist())
+    if allowed_ids:
+        df = df[df["Machine ID"].isin(allowed_ids)].copy()
 
     # Historical interruption events used by the Halt / Stop downtime chart.
     # Use raw event codes so merging current Stopped machines into Idle does not
@@ -362,23 +533,23 @@ def downtime_events(filters=None):
 
 
 def idle_events(filters=None):
-    df = _api_dataframe(filters, apply_dates=True)
+    event_filters = dict(_normalize_filters(filters))
+    event_filters["plant"] = "All"
+    event_filters["department"] = "All"
+    event_filters["machine_type"] = "All"
+    df = _api_dataframe(event_filters, apply_dates=True)
     if df.empty:
         return pd.DataFrame()
+    plant = _normalize_filters(filters).get("plant", "All")
+    allowed_ids = set(_machine_master_dataframe(plant)["Machine ID"].tolist())
+    if allowed_ids:
+        df = df[df["Machine ID"].isin(allowed_ids)].copy()
     df = df[df["Status"] == "Idle"].copy()
     return _calculate_event_durations(df, filters)
 
 
-def get_filter_options():
-    df = _api_dataframe(
-        {
-            "start_date": None,
-            "end_date": None,
-            "department": "All",
-            "machine_type": "All",
-            "search_text": "",
-        }
-    )
+def get_filter_options(plant="All"):
+    df = _machine_master_dataframe(plant or "All")
 
     if df.empty:
         return {
@@ -391,7 +562,7 @@ def get_filter_options():
     departments = ["All"]
     if "Department" in df.columns:
         vals = sorted(
-            x for x in df["Department"].dropna().astype(str).str.strip().unique().tolist()
+            x for x in df["Department"].dropna().astype(str).str.strip().str.upper().unique().tolist()
             if x
         )
         departments += vals
@@ -404,7 +575,10 @@ def get_filter_options():
         )
         machine_types += vals
 
-    dates = pd.to_datetime(df["Status From"], errors="coerce", utc=True).dropna()
+    if "Status From" in df.columns:
+        dates = pd.to_datetime(df["Status From"], errors="coerce", utc=True).dropna()
+    else:
+        dates = pd.Series(dtype="datetime64[ns, UTC]")
     min_date = dates.min().strftime("%Y-%m-%d") if not dates.empty else None
     max_date = dates.max().strftime("%Y-%m-%d") if not dates.empty else None
 
@@ -416,18 +590,13 @@ def get_filter_options():
     }
 
 
-def get_machine_types_by_department(department="All"):
-    df = _api_dataframe(
-        {
-            "start_date": None,
-            "end_date": None,
-            "department": department or "All",
-            "machine_type": "All",
-            "search_text": "",
-        }
-    )
+def get_machine_types_by_department(department="All", plant="All"):
+    df = _machine_master_dataframe(plant or "All")
     if df.empty or "Machine Type" not in df.columns:
         return ["All"]
+    normalized_department = _normalize_department_value(department)
+    if normalized_department != "All" and "Department" in df.columns:
+        df = df[df["Department"].apply(_normalize_department_value).eq(normalized_department)]
 
     values = sorted(
         x for x in df["Machine Type"].dropna().astype(str).str.strip().unique().tolist()
@@ -507,6 +676,168 @@ def get_kpis(filters=None):
     return result
 
 
+
+
+def _operational_time_summary(filters=None):
+    """
+    Calculate real runtime and Halt/Stop downtime from event-log timestamps.
+
+    Business rule currently confirmed for Availability:
+        Availability % = Run Time / (Run Time + Downtime) * 100
+
+    Idle time is deliberately excluded from this formula. It can be added later
+    only if the business explicitly changes the Availability definition.
+    """
+    df = _api_dataframe(filters, apply_dates=True)
+    master = _machine_master_dataframe(_normalize_filters(filters).get("plant", "All"))
+
+    if df is None or df.empty or master.empty:
+        return {
+            "run_minutes": 0.0,
+            "downtime_minutes": 0.0,
+            "availability": None,
+        }
+
+    allowed_ids = set(master["Machine ID"].tolist())
+    if allowed_ids:
+        df = df[df["Machine ID"].isin(allowed_ids)].copy()
+
+    df = df.dropna(subset=["Status From"]).copy()
+    if df.empty:
+        return {
+            "run_minutes": 0.0,
+            "downtime_minutes": 0.0,
+            "availability": None,
+        }
+
+    # Keep event order machine-by-machine. The duration of each event state is
+    # the time until the next event for that same machine. The current/latest
+    # event runs until the selected range end (or current UTC time).
+    df = df.sort_values(
+        ["Machine ID", "Status From", "Updated At", "Job ID"],
+        ascending=[True, True, True, True],
+        na_position="last",
+    )
+
+    df["Next Time"] = df.groupby("Machine ID")["Status From"].shift(-1)
+    reference_time = _get_reference_time(df, filters)
+    df["Next Time"] = df["Next Time"].fillna(reference_time)
+
+    df["Operational Duration Minutes"] = (
+        (df["Next Time"] - df["Status From"]).dt.total_seconds() / 60.0
+    )
+    df["Operational Duration Minutes"] = pd.to_numeric(
+        df["Operational Duration Minutes"], errors="coerce"
+    ).fillna(0.0).clip(lower=0.0)
+
+    run_minutes = float(
+        df.loc[df["Status"].eq("Running"), "Operational Duration Minutes"].sum()
+    )
+    downtime_minutes = float(
+        df.loc[df["Status"].eq("Halt / Stop"), "Operational Duration Minutes"].sum()
+    )
+
+    denominator = run_minutes + downtime_minutes
+    availability = (
+        round((run_minutes / denominator) * 100.0, 1)
+        if denominator > 0
+        else None
+    )
+
+    return {
+        "run_minutes": run_minutes,
+        "downtime_minutes": downtime_minutes,
+        "availability": availability,
+    }
+
+
+def get_operational_kpis(filters=None):
+    """
+    Return the real operational KPI values used by the top cards.
+
+    Performance:
+        Total Actual / Total Planned * 100
+
+    Availability:
+        Run Time / (Run Time + Halt/Stop Downtime) * 100
+
+    Quality:
+        Temporary approved rule:
+        Reject Qty = 0
+        Good Qty = Total Produced - Reject Qty
+        Quality % = Good Qty / Total Produced * 100
+
+    OEE:
+        Availability * Performance * Quality
+
+    No demo/static KPI percentage is hardcoded here.
+    """
+    normalized = _normalize_filters(filters)
+
+    data = fetch_operational_kpis(
+        normalized.get("start_date"),
+        normalized.get("end_date"),
+        normalized.get("plant"),
+    )
+
+    return {
+        "performance": data.get(
+            "performance_pct"
+        ),
+        "availability": data.get(
+            "availability_pct"
+        ),
+        "quality": data.get(
+            "quality_pct"
+        ),
+        "oee": data.get(
+            "oee_pct"
+        ),
+
+        "planned_qty": float(
+            data.get(
+                "total_planned_qty",
+                0.0,
+            )
+            or 0.0
+        ),
+        "actual_qty": float(
+            data.get(
+                "total_actual_qty",
+                0.0,
+            )
+            or 0.0
+        ),
+        "reject_qty": float(
+            data.get(
+                "reject_qty",
+                0.0,
+            )
+            or 0.0
+        ),
+        "good_qty": float(
+            data.get(
+                "good_qty",
+                0.0,
+            )
+            or 0.0
+        ),
+        "run_minutes": float(
+            data.get(
+                "running_minutes",
+                0.0,
+            )
+            or 0.0
+        ),
+        "downtime_minutes": float(
+            data.get(
+                "downtime_minutes",
+                0.0,
+            )
+            or 0.0
+        ),
+    }
+
 def machine_status_trend(filters=None, days=7):
     """
     Build a true daily status snapshot. For each day we take the latest event
@@ -515,15 +846,32 @@ def machine_status_trend(filters=None, days=7):
     percentages aligned to the machine population.
     """
     filters = _normalize_filters(filters)
-    df = _api_dataframe(filters, apply_dates=False)
+    master = _machine_master_dataframe(filters.get("plant", "All"))
+    event_filters = dict(filters)
+    event_filters["plant"] = "All"
+    event_filters["department"] = "All"
+    event_filters["machine_type"] = "All"
+    df = _api_dataframe(event_filters, apply_dates=False)
     empty = pd.DataFrame(columns=["Date", *ALLOWED_STATUSES])
 
-    if df.empty or "Status From" not in df.columns:
+    if master.empty:
         return empty
+
+    if df.empty or "Status From" not in df.columns:
+        return pd.DataFrame(
+            [{"Date": pd.Timestamp.now(tz="UTC").strftime("%d %b"), "Running": 0, "Idle": 100.0, "Halt / Stop": 0.0}],
+            columns=["Date", *ALLOWED_STATUSES],
+        )
 
     df = df.dropna(subset=["Status From"]).copy()
     if df.empty:
         return empty
+    df = df[df["Machine ID"].isin(master["Machine ID"])].copy()
+    if df.empty:
+        return pd.DataFrame(
+            [{"Date": pd.Timestamp.now(tz="UTC").strftime("%d %b"), "Running": 0, "Idle": 100.0, "Halt / Stop": 0.0}],
+            columns=["Date", *ALLOWED_STATUSES],
+        )
 
     end_day = pd.Timestamp.now(tz="UTC").floor("D")
     if filters.get("end_date"):
@@ -550,11 +898,14 @@ def machine_status_trend(filters=None, days=7):
             na_position="last",
         ).drop_duplicates(subset=["Machine ID"], keep="first")
 
-        total = int(snapshot["Machine ID"].nunique())
+        total = int(master["Machine ID"].nunique())
         counts = snapshot["Status"].value_counts()
         row = {"Date": day.strftime("%d %b")}
         for status in ALLOWED_STATUSES:
-            row[status] = round(float(counts.get(status, 0)) / total * 100, 1) if total else 0
+            value = float(counts.get(status, 0))
+            if status == "Idle":
+                value += max(total - int(snapshot["Machine ID"].nunique()), 0)
+            row[status] = round(value / total * 100, 1) if total else 0
         rows.append(row)
 
     return pd.DataFrame(rows, columns=["Date", *ALLOWED_STATUSES])
@@ -626,9 +977,139 @@ def idle_machine_detail(filters=None):
     return df[[c for c in ["Machine Name", "Since From", "Duration"] if c in df.columns]]
 
 
+def halt_stop_machine_detail(filters=None):
+    """Return currently Halt / Stop machines, longest interruption first."""
+    df = machines_data(filters)
+    if df.empty:
+        return pd.DataFrame(
+            columns=["Machine Name", "Since From", "Duration", "Reason"]
+        )
+
+    df = df[df["Status"] == "Halt / Stop"].copy()
+    if df.empty:
+        return pd.DataFrame(
+            columns=["Machine Name", "Since From", "Duration", "Reason"]
+        )
+
+    df = _add_status_duration(df, filters)
+    df = df.sort_values("Duration Minutes", ascending=False, na_position="last")
+    df = df.rename(columns={"Status From": "Since From"})
+
+    if "Reason" not in df.columns:
+        df["Reason"] = ""
+    df["Reason"] = df["Reason"].fillna("").astype(str).str.strip()
+    df.loc[df["Reason"].eq(""), "Reason"] = "Not specified"
+
+    return df[[c for c in ["Machine Name", "Since From", "Duration", "Reason"] if c in df.columns]]
+
+
+def machine_wise_efficiency(filters=None):
+    """
+    Machine-wise efficiency from real job/workbench + event-log data.
+
+    Formula:
+        Efficiency % = Machine Actual Production / Machine Planned Production * 100
+
+    Data sources:
+        Planned Qty = cableflow.job_workbench_job.total_qty
+        Actual Qty  = MAX(cableflow.event_logs.actual_executed_qty) per job
+
+    The current dashboard filters are preserved. Date range is applied in the
+    database query; plant/department/machine-type/global-search are applied by
+    matching the resulting machines against the already-filtered dashboard data.
+    """
+    normalized = _normalize_filters(filters)
+
+    records = fetch_machine_efficiency(
+        normalized.get("start_date"),
+        normalized.get("end_date"),
+    )
+
+    columns = [
+        "Machine ID",
+        "Machine Name",
+        "Planned Qty",
+        "Actual Qty",
+        "Efficiency %",
+    ]
+
+    if not records:
+        return pd.DataFrame(columns=columns)
+
+    result = pd.DataFrame(records)
+    if result.empty:
+        return pd.DataFrame(columns=columns)
+
+    rename_map = {
+        "machine_id": "Machine ID",
+        "machine_name": "Machine Name",
+        "planned_qty": "Planned Qty",
+        "actual_qty": "Actual Qty",
+        "efficiency_pct": "Efficiency %",
+    }
+    result = result.rename(columns=rename_map)
+
+    for col in ["Machine ID", "Planned Qty", "Actual Qty", "Efficiency %"]:
+        if col not in result.columns:
+            result[col] = 0
+        result[col] = pd.to_numeric(result[col], errors="coerce")
+
+    if "Machine Name" not in result.columns:
+        result["Machine Name"] = ""
+
+    result["Machine Name"] = result["Machine Name"].fillna("").astype(str).str.strip()
+    result = result[result["Machine Name"].ne("")].copy()
+    result = result[result["Planned Qty"].fillna(0) > 0].copy()
+    result = result.dropna(subset=["Efficiency %"])
+
+    # Apply Plant / Department / Machine Type / global search by using the same
+    # filtered machine population that powers KPI cards and machine tables.
+    machine_scope = machines_data(filters)
+    if machine_scope is not None and not machine_scope.empty:
+        allowed_names = set(
+            machine_scope["Machine Name"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.casefold()
+            .loc[lambda x: x.ne("")]
+            .tolist()
+        )
+
+        if allowed_names:
+            result = result[
+                result["Machine Name"].str.casefold().isin(allowed_names)
+            ].copy()
+
+    # Global search can also directly match an efficiency machine name even when
+    # current machine metadata is incomplete.
+    search_text = str(normalized.get("search_text") or "").strip()
+    if search_text:
+        result = result[
+            result["Machine Name"].str.contains(
+                search_text,
+                case=False,
+                na=False,
+                regex=False,
+            )
+        ].copy()
+
+    if result.empty:
+        return pd.DataFrame(columns=columns)
+
+    result["Efficiency %"] = result["Efficiency %"].round(2)
+    result = result.sort_values(
+        ["Efficiency %", "Machine Name"],
+        ascending=[False, True],
+        kind="stable",
+    )
+
+    return result[columns].reset_index(drop=True)
+
+
 def department_summary(filters=None):
     df = machines_data(filters)
-    columns = ["Department", "Total", "Running", "Idle", "Halt / Stop", "OEE %"]
+    columns = ["Department", "Total", "Running", "Idle", "Halt / Stop"]
     if df.empty:
         return pd.DataFrame(columns=columns)
 
@@ -639,9 +1120,6 @@ def department_summary(filters=None):
     rows = []
     for department, group in df.groupby("Department"):
         counts = group["Status"].value_counts()
-        actual = _safe_numeric(group["Actual Qty"]).sum()
-        planned = _safe_numeric(group["Planned Qty"]).sum()
-        oee = round(actual / planned * 100, 1) if planned > 0 else 0
         rows.append(
             {
                 "Department": department,
@@ -649,10 +1127,13 @@ def department_summary(filters=None):
                 "Running": int(counts.get("Running", 0)),
                 "Idle": int(counts.get("Idle", 0)),
                 "Halt / Stop": int(counts.get("Halt / Stop", 0)),
-                "OEE %": oee,
             }
         )
-    return pd.DataFrame(rows, columns=columns)
+
+    result = pd.DataFrame(rows, columns=columns)
+    if not result.empty:
+        result = result.sort_values(["Department"], kind="stable").reset_index(drop=True)
+    return result
 
 def _is_ton_uom(value):
     text = str(value or "").strip().upper().replace(".", "")
@@ -674,9 +1155,20 @@ def _production_event_dataframe(filters=None, apply_dates=True):
     dashboard reports the ton values as unavailable instead of using a hardcoded
     target or silently treating metres/units as tons.
     """
-    df = _api_dataframe(filters, apply_dates=apply_dates)
+    normalized = _normalize_filters(filters)
+    master = _machine_master_dataframe(normalized.get("plant", "All"))
+    event_filters = dict(normalized)
+    event_filters["plant"] = "All"
+    event_filters["department"] = "All"
+    event_filters["machine_type"] = "All"
+    df = _api_dataframe(event_filters, apply_dates=apply_dates)
     if df.empty:
         return pd.DataFrame()
+
+    if not master.empty:
+        df = df[df["Machine ID"].isin(master["Machine ID"])].copy()
+        if df.empty:
+            return pd.DataFrame()
 
     required = ["Job ID", "Status From", "Actual Qty", "Planned Qty"]
     if any(c not in df.columns for c in required):
@@ -829,6 +1321,193 @@ def planned_vs_actual_monthly(filters=None):
     return pd.DataFrame(rows).sort_values("MonthNo")[["Month", "Target", "Actual", "Achievement %"]]
 
 
+
+# =========================================================
+# PRODUCTION GROUP SUMMARY
+# =========================================================
+
+def production_group_summary(filters=None):
+    """
+    Return real Target/Actual production grouped into:
+      1. Extruders
+      2. Bunchers & Braiders
+      3. Other Lines
+
+    The function deliberately uses only quantities that are proven to be Tons
+    by _production_event_dataframe(). It does not relabel metres/units as Tons.
+
+    Group classification uses the real Process Name + Machine Name metadata:
+      Extruders:
+        extrud*, monosil, ccv
+      Bunchers & Braiders:
+        bunch*, braid*, braider*, stranding/strander
+      Other Lines:
+        everything else
+
+    Target is counted once per Job ID.
+    Actual is the real production tonnage delta already calculated per event.
+    """
+
+    columns = [
+        "Group",
+        "Target",
+        "Actual",
+        "Unit",
+    ]
+
+    df = _production_event_dataframe(
+        filters,
+        apply_dates=True,
+    )
+
+    group_order = [
+        "Extruders",
+        "Bunchers & Braiders",
+        "Other Lines",
+    ]
+
+    if df is None or df.empty:
+        return pd.DataFrame(
+            [
+                {
+                    "Group": group,
+                    "Target": None,
+                    "Actual": None,
+                    "Unit": "Tons",
+                }
+                for group in group_order
+            ],
+            columns=columns,
+        )
+
+    def classify_group(row):
+        text = " ".join(
+            [
+                str(row.get("Process Name") or ""),
+                str(row.get("Machine Name") or ""),
+                str(row.get("Machine Type") or ""),
+            ]
+        ).casefold()
+
+        extruder_terms = (
+            "extrud",
+            "monosil",
+            "ccv",
+        )
+
+        bunch_braid_terms = (
+            "bunch",
+            "braid",
+            "braider",
+            "stranding",
+            "strander",
+        )
+
+        if any(term in text for term in extruder_terms):
+            return "Extruders"
+
+        if any(term in text for term in bunch_braid_terms):
+            return "Bunchers & Braiders"
+
+        return "Other Lines"
+
+    df = df.copy()
+    df["Production Group"] = df.apply(
+        classify_group,
+        axis=1,
+    )
+
+    rows = []
+
+    for group_name in group_order:
+        group = df[
+            df["Production Group"].eq(group_name)
+        ].copy()
+
+        target = None
+        actual = None
+
+        if not group.empty:
+            # One target per job so repeated event rows do not inflate plan.
+            valid_target = group.dropna(
+                subset=["Target Tons Source"]
+            ).copy()
+            valid_target = valid_target[
+                pd.to_numeric(
+                    valid_target["Target Tons Source"],
+                    errors="coerce",
+                ).fillna(0) > 0
+            ]
+
+            if not valid_target.empty:
+                per_job_target = (
+                    valid_target
+                    .sort_values("Status From")
+                    .drop_duplicates(
+                        subset=["Job ID"],
+                        keep="last",
+                    )
+                )
+
+                target_values = pd.to_numeric(
+                    per_job_target["Target Tons Source"],
+                    errors="coerce",
+                ).dropna()
+
+                if not target_values.empty:
+                    target = round(
+                        float(target_values.sum()),
+                        2,
+                    )
+
+            actual_values = pd.to_numeric(
+                group.get(
+                    "Production Tons Delta",
+                    pd.Series(dtype=float),
+                ),
+                errors="coerce",
+            ).dropna()
+
+            if not actual_values.empty:
+                actual = round(
+                    float(
+                        actual_values.clip(lower=0).sum()
+                    ),
+                    2,
+                )
+
+        rows.append(
+            {
+                "Group": group_name,
+                "Target": target,
+                "Actual": actual,
+                "Unit": "Tons",
+            }
+        )
+
+    return pd.DataFrame(
+        rows,
+        columns=columns,
+    )
+
+
+def production_group_summary(filters=None):
+    """Return authoritative production groups in meters for the selected plant."""
+    filters = filters or {}
+    data = fetch_production_groups(
+        filters.get("start_date"),
+        filters.get("end_date"),
+        filters.get("plant") or "All",
+    )
+    rows = []
+    for group in ("Extruders", "Bunchers & Braiders", "Other Lines"):
+        target, actual = data.get(group, (None, None))
+        target = None if pd.isna(target) else target
+        actual = None if pd.isna(actual) else actual
+        rows.append({"Group": group, "Target": target, "Actual": actual, "Unit": "Meters"})
+    return pd.DataFrame(rows, columns=["Group", "Target", "Actual", "Unit"])
+
+
 def production_daily_trend(filters=None, days=7):
     """
     Production Overview is sourced from the production targets API.
@@ -848,6 +1527,13 @@ def production_daily_trend(filters=None, days=7):
     Achievement is calculated by the UI only when Target > 0.
     """
     rows = fetch_production_targets()
+
+    filters = _normalize_filters(filters)
+    selected_plant = filters.get("plant", "All")
+    rows = [
+        row for row in rows
+        if _plant_matches_work_center(selected_plant, row.get("work_center", ""))
+    ]
 
     if not rows:
         return pd.DataFrame(columns=["Date", "Target", "Actual"])
