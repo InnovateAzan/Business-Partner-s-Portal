@@ -1,3 +1,6 @@
+from functools import lru_cache
+import time
+
 import pandas as pd
 
 from services.api_service import (
@@ -41,6 +44,17 @@ HALT_STOP_EVENT_CODES = {0, 30, 50, 60, 70, 80, 90, 100}
 
 def clear_data_cache():
     clear_api_cache()
+    _machine_master_dataframe_cached.cache_clear()
+    _api_dataframe_cached.cache_clear()
+    _latest_event_rows_cached.cache_clear()
+    _latest_machine_rows_cached.cache_clear()
+    _downtime_events_cached.cache_clear()
+    _idle_events_cached.cache_clear()
+
+
+def _dashboard_timing(label, start_time):
+    elapsed = time.perf_counter() - start_time
+    print(f"Dashboard Timing -> {label}: {elapsed:.2f}s")
 
 
 def _normalize_filters(filters):
@@ -59,6 +73,30 @@ def _normalize_filters(filters):
         "department": _clean(filters.get("department")),
         "machine_type": _clean(filters.get("machine_type")),
         "search_text": str(filters.get("search_text") or "").strip(),
+    }
+
+
+def _filters_cache_key(filters=None, apply_dates=True):
+    normalized = _normalize_filters(filters)
+    return (
+        normalized.get("start_date"),
+        normalized.get("end_date"),
+        normalized.get("plant"),
+        normalized.get("department"),
+        normalized.get("machine_type"),
+        normalized.get("search_text"),
+        bool(apply_dates),
+    )
+
+
+def _filters_from_cache_key(key):
+    return {
+        "start_date": key[0],
+        "end_date": key[1],
+        "plant": key[2],
+        "department": key[3],
+        "machine_type": key[4],
+        "search_text": key[5],
     }
 
 
@@ -173,6 +211,13 @@ def _should_filter_department(plant):
 
 
 def _machine_master_dataframe(plant="All"):
+    normalized_plant = _normalize_plant_value(plant)
+    return _machine_master_dataframe_cached(normalized_plant).copy()
+
+
+@lru_cache(maxsize=16)
+def _machine_master_dataframe_cached(normalized_plant="All"):
+    start_time = time.perf_counter()
     conn = None
     try:
         conn = _get_connection()
@@ -186,8 +231,7 @@ def _machine_master_dataframe(plant="All"):
             WHERE mm.id IS NOT NULL
         """
         params = []
-        normalized_plant = _normalize_plant_value(plant)
-        if _should_filter_department(plant):
+        if _should_filter_department(normalized_plant):
             query += " AND TRIM(UPPER(mm.department)) = %s"
             params.append(normalized_plant)
 
@@ -203,9 +247,11 @@ def _machine_master_dataframe(plant="All"):
         print("Machine Scope ->")
         print(f"Plant: {normalized_plant}")
         print(f"Machine Count: {int(df['Machine ID'].nunique())}")
+        _dashboard_timing("Machine Scope", start_time)
         return df[df["Machine ID"] > 0].reset_index(drop=True)
     except Exception as error:
         print(f"Error reading job_machines_master: {error}")
+        _dashboard_timing("Machine Scope", start_time)
         return pd.DataFrame(columns=["Machine ID", "Machine Name", "Department", "Machine Type"])
     finally:
         if conn:
@@ -213,6 +259,14 @@ def _machine_master_dataframe(plant="All"):
 
 
 def _latest_event_rows(filters=None):
+    key = _filters_cache_key(filters, apply_dates=False)
+    return _latest_event_rows_cached(key).copy()
+
+
+@lru_cache(maxsize=64)
+def _latest_event_rows_cached(key):
+    start_time = time.perf_counter()
+    filters = _filters_from_cache_key(key)
     event_filters = dict(_normalize_filters(filters))
     event_filters["plant"] = "All"
     event_filters["department"] = "All"
@@ -220,13 +274,16 @@ def _latest_event_rows(filters=None):
     event_filters["search_text"] = ""
     df = _api_dataframe(event_filters, apply_dates=False)
     if df.empty:
+        _dashboard_timing("Latest Machine Status", start_time)
         return pd.DataFrame()
     df = df.sort_values(
         ["Machine ID", "Status From", "Updated At", "Job ID"],
         ascending=[True, False, False, False],
         na_position="last",
     )
-    return df.drop_duplicates(subset=["Machine ID"], keep="first").copy()
+    result = df.drop_duplicates(subset=["Machine ID"], keep="first").copy()
+    _dashboard_timing("Latest Machine Status", start_time)
+    return result
 
 
 def _infer_plant_from_row(row):
@@ -243,10 +300,14 @@ def _infer_plant_from_row(row):
 
 def _plant_matches_work_center(plant, work_center):
     plant = _normalize_plant_value(plant)
-    if plant == "All":
-        return True
-    wc = _normalize_plant_value(work_center)
-    return wc == plant
+    wc = str(work_center or "").strip().upper()
+    production_work_centers = {
+        "PCF": {"PCF"},
+        "GCFA": {"GCF"},
+        "GCFB": {"GCF"},
+        "All": {"GCF", "PCF"},
+    }
+    return wc in production_work_centers.get(plant, {plant})
 
 
 def _api_records(filters=None, apply_dates=True):
@@ -260,14 +321,24 @@ def _api_records(filters=None, apply_dates=True):
 
 
 def _api_dataframe(filters=None, apply_dates=True):
-    filters = _normalize_filters(filters)
+    key = _filters_cache_key(filters, apply_dates=apply_dates)
+    return _api_dataframe_cached(key).copy()
+
+
+@lru_cache(maxsize=64)
+def _api_dataframe_cached(key):
+    start_time = time.perf_counter()
+    filters = _filters_from_cache_key(key)
+    apply_dates = key[6]
     records = _api_records(filters, apply_dates=apply_dates)
 
     if not records:
+        _dashboard_timing("Event DataFrame", start_time)
         return pd.DataFrame()
 
     df = pd.DataFrame(records)
     if df.empty:
+        _dashboard_timing("Event DataFrame", start_time)
         return pd.DataFrame()
 
     df = df.rename(
@@ -328,6 +399,7 @@ def _api_dataframe(filters=None, apply_dates=True):
     # Do not allow machine id 0/null placeholders to become real machines.
     df = df[df["Machine ID"] > 0].copy()
     if df.empty:
+        _dashboard_timing("Event DataFrame", start_time)
         return pd.DataFrame()
 
     # Machine Name comes from cableflow.job_machines_master through api_service.
@@ -351,6 +423,7 @@ def _api_dataframe(filters=None, apply_dates=True):
 
     df = _apply_local_filters(df, filters, apply_dates=apply_dates)
 
+    _dashboard_timing("Event DataFrame", start_time)
     return df
 
 
@@ -419,9 +492,18 @@ def _apply_local_filters(df, filters=None, apply_dates=True):
 
 
 def _latest_machine_rows(filters=None):
+    key = _filters_cache_key(filters, apply_dates=False)
+    return _latest_machine_rows_cached(key).copy()
+
+
+@lru_cache(maxsize=64)
+def _latest_machine_rows_cached(key):
+    start_time = time.perf_counter()
+    filters = _filters_from_cache_key(key)
     filters = _normalize_filters(filters)
     master = _machine_master_dataframe(filters.get("plant", "All"))
     if master.empty:
+        _dashboard_timing("Machine Status Snapshot", start_time)
         return pd.DataFrame()
 
     latest = _latest_event_rows(filters)
@@ -439,6 +521,7 @@ def _latest_machine_rows(filters=None):
         master["Planned Qty"] = 0
         master["Interface Log"] = ""
         master["Plant"] = master["Department"]
+        _dashboard_timing("Machine Status Snapshot", start_time)
         return master
 
     merged = master.merge(
@@ -463,7 +546,9 @@ def _latest_machine_rows(filters=None):
     merged["Machine Type"] = merged["Machine Type"].fillna("").astype(str).str.strip()
     merged["Machine Type"] = merged["Machine Type"].where(merged["Machine Type"].ne(""), event_machine_type)
     merged["Plant"] = merged["Department"]
-    return _apply_local_filters(merged, filters, apply_dates=False)
+    result = _apply_local_filters(merged, filters, apply_dates=False)
+    _dashboard_timing("Machine Status Snapshot", start_time)
+    return result
 
 
 def _add_status_duration(df, filters=None):
@@ -513,12 +598,21 @@ def machines_data(filters=None):
 
 
 def downtime_events(filters=None):
+    key = _filters_cache_key(filters, apply_dates=True)
+    return _downtime_events_cached(key).copy()
+
+
+@lru_cache(maxsize=64)
+def _downtime_events_cached(key):
+    start_time = time.perf_counter()
+    filters = _filters_from_cache_key(key)
     event_filters = dict(_normalize_filters(filters))
     event_filters["plant"] = "All"
     event_filters["department"] = "All"
     event_filters["machine_type"] = "All"
     df = _api_dataframe(event_filters, apply_dates=True)
     if df.empty:
+        _dashboard_timing("Downtime Events", start_time)
         return pd.DataFrame()
     plant = _normalize_filters(filters).get("plant", "All")
     allowed_ids = set(_machine_master_dataframe(plant)["Machine ID"].tolist())
@@ -529,23 +623,36 @@ def downtime_events(filters=None):
     # Use raw event codes so merging current Stopped machines into Idle does not
     # erase the existing downtime-reason history.
     df = df[df["Status Code"].astype(int).isin(HALT_STOP_EVENT_CODES)].copy()
-    return _calculate_event_durations(df, filters)
+    result = _calculate_event_durations(df, filters)
+    _dashboard_timing("Downtime Events", start_time)
+    return result
 
 
 def idle_events(filters=None):
+    key = _filters_cache_key(filters, apply_dates=True)
+    return _idle_events_cached(key).copy()
+
+
+@lru_cache(maxsize=64)
+def _idle_events_cached(key):
+    start_time = time.perf_counter()
+    filters = _filters_from_cache_key(key)
     event_filters = dict(_normalize_filters(filters))
     event_filters["plant"] = "All"
     event_filters["department"] = "All"
     event_filters["machine_type"] = "All"
     df = _api_dataframe(event_filters, apply_dates=True)
     if df.empty:
+        _dashboard_timing("Idle Events", start_time)
         return pd.DataFrame()
     plant = _normalize_filters(filters).get("plant", "All")
     allowed_ids = set(_machine_master_dataframe(plant)["Machine ID"].tolist())
     if allowed_ids:
         df = df[df["Machine ID"].isin(allowed_ids)].copy()
     df = df[df["Status"] == "Idle"].copy()
-    return _calculate_event_durations(df, filters)
+    result = _calculate_event_durations(df, filters)
+    _dashboard_timing("Idle Events", start_time)
+    return result
 
 
 def get_filter_options(plant="All"):

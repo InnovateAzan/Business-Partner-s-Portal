@@ -34,6 +34,54 @@ body {
     transform: none !important;
 }
 
+.dashboard-loading-parent {
+    position: relative !important;
+    min-height: 320px !important;
+}
+
+.dashboard-loading-shell {
+    width: 100% !important;
+}
+
+.dashboard-loading-parent .dash-loading {
+    background: rgba(255, 255, 255, 0.78) !important;
+    backdrop-filter: blur(1.5px) !important;
+}
+
+.dashboard-loader {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 12px !important;
+    padding: 14px 18px !important;
+    background: rgba(255, 255, 255, 0.96) !important;
+    border: 1px solid rgba(5, 168, 69, 0.16) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 14px 38px rgba(15, 23, 42, 0.12) !important;
+}
+
+.dashboard-loader-spinner {
+    width: 28px !important;
+    height: 28px !important;
+    border: 3px solid rgba(5, 168, 69, 0.16) !important;
+    border-top-color: #05a845 !important;
+    border-radius: 999px !important;
+    animation: dashboard-loader-spin 0.85s linear infinite !important;
+}
+
+.dashboard-loader-text {
+    color: #172033 !important;
+    font-size: 13px !important;
+    font-weight: 800 !important;
+    letter-spacing: 0 !important;
+    white-space: nowrap !important;
+}
+
+@keyframes dashboard-loader-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 /* =========================================================
    MAIN DASHBOARD HEADER
 ========================================================= */

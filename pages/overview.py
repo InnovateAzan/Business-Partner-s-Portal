@@ -1,3 +1,5 @@
+import time
+
 from dash import html
 
 from components.cards import (
@@ -263,44 +265,77 @@ def production_overview_card(production_daily):
     )
 
 
+def _timed_dashboard_call(label, func, *args, **kwargs):
+    start_time = time.perf_counter()
+    result = func(*args, **kwargs)
+    elapsed = time.perf_counter() - start_time
+    print(f"Dashboard Timing -> {label}: {elapsed:.2f}s")
+    return result
+
+
 # =========================================================
 # MAIN OVERVIEW PAGE
 # =========================================================
 
 def overview_page(filters):
-    kpis = get_kpis(filters)
-    operational_kpis = get_operational_kpis(filters)
-
-    production = last_24h_production(
-        filters
+    render_start = time.perf_counter()
+    kpis = _timed_dashboard_call("Machine Summary", get_kpis, filters)
+    operational_kpis = _timed_dashboard_call(
+        "Operational KPI",
+        get_operational_kpis,
+        filters,
     )
 
-    production_daily = production_daily_trend(
-        filters
+    production = _timed_dashboard_call(
+        "Last 24h Production",
+        last_24h_production,
+        filters,
     )
 
-    reasons = downtime_reasons(
-        filters
+    production_daily = _timed_dashboard_call(
+        "Production API",
+        production_daily_trend,
+        filters,
     )
 
-    status_trend = machine_status_trend(
-        filters
+    reasons = _timed_dashboard_call(
+        "Downtime Reasons",
+        downtime_reasons,
+        filters,
     )
 
-    idle_detail = idle_machine_detail(
-        filters
+    status_trend = _timed_dashboard_call(
+        "Machine Status Trend",
+        machine_status_trend,
+        filters,
     )
 
-    halt_stop_detail = halt_stop_machine_detail(
-        filters
+    idle_detail = _timed_dashboard_call(
+        "Idle Machines",
+        idle_machine_detail,
+        filters,
     )
 
-    efficiency_df = machine_wise_efficiency(
-        filters
+    halt_stop_detail = _timed_dashboard_call(
+        "Halt / Stop Machines",
+        halt_stop_machine_detail,
+        filters,
     )
 
-    production_groups = production_group_summary(
-        filters
+    efficiency_df = _timed_dashboard_call(
+        "Efficiency",
+        machine_wise_efficiency,
+        filters,
+    )
+
+    production_groups = _timed_dashboard_call(
+        "Production Groups",
+        production_group_summary,
+        filters,
+    )
+    print(
+        "Dashboard Timing -> Total Render: "
+        f"{time.perf_counter() - render_start:.2f}s"
     )
 
     production_group_map = {}
@@ -360,13 +395,6 @@ def overview_page(filters):
                     ),
 
                     operational_kpi_card(
-                        "OEE",
-                        operational_kpis.get("oee"),
-                        "Availability × Performance × Quality",
-                        "oee",
-                    ),
-
-                    operational_kpi_card(
                         "Performance",
                         operational_kpis.get("performance"),
                         "Actual production vs planned production",
@@ -385,6 +413,13 @@ def overview_page(filters):
                         operational_kpis.get("availability"),
                         "Runtime vs Halt / Stop downtime",
                         "availability",
+                    ),
+
+                    operational_kpi_card(
+                        "OEE",
+                        operational_kpis.get("oee"),
+                        "Availability × Performance × Quality",
+                        "oee",
                     ),
                 ],
             ),
@@ -459,45 +494,7 @@ def overview_page(filters):
             ),
 
             # =================================================
-            # ROW 4 - MACHINE DETAIL TABLES
-            # =================================================
-            html.Div(
-                className="overview-machine-detail-row",
-                children=[
-                    # IDLE MACHINES
-                    html.Div(
-                        className="card machine-detail-card idle-detail-card",
-                        children=[
-                            idle_machines_card_header(
-                                "Idle Machines",
-                                "Machines available with no active running job",
-                            ),
-                            idle_machines_table(
-                                idle_detail,
-                                max_rows=None,
-                            ),
-                        ],
-                    ),
-
-                    # HALT / STOP MACHINES
-                    html.Div(
-                        className="card machine-detail-card halt-stop-detail-card",
-                        children=[
-                            halt_stop_machines_card_header(
-                                "Halt / Stop Machines",
-                                "Machines with temporarily interrupted active jobs",
-                            ),
-                            halt_stop_machines_table(
-                                halt_stop_detail,
-                                max_rows=None,
-                            ),
-                        ],
-                    ),
-                ],
-            ),
-
-            # =================================================
-            # ROW 5 - FULL-WIDTH MACHINE-WISE EFFICIENCY
+            # ROW 4 - FULL-WIDTH MACHINE-WISE EFFICIENCY
             # =================================================
             html.Div(
                 className="card machine-efficiency-card",
@@ -525,7 +522,7 @@ def overview_page(filters):
             ),
 
             # =================================================
-            # ROW 6 - PRODUCTION GROUP TARGET VS ACTUAL
+            # ROW 5 - PRODUCTION GROUP TARGET VS ACTUAL
             # =================================================
             html.Div(
                 className="production-group-row-cards",
@@ -576,6 +573,44 @@ def overview_page(filters):
                             "Other Lines",
                             {},
                         ).get("unit", "Tons"),
+                    ),
+                ],
+            ),
+
+            # =================================================
+            # ROW 6 - MACHINE DETAIL TABLES
+            # =================================================
+            html.Div(
+                className="overview-machine-detail-row",
+                children=[
+                    # IDLE MACHINES
+                    html.Div(
+                        className="card machine-detail-card idle-detail-card",
+                        children=[
+                            idle_machines_card_header(
+                                "Idle Machines",
+                                "Machines available with no active running job",
+                            ),
+                            idle_machines_table(
+                                idle_detail,
+                                max_rows=None,
+                            ),
+                        ],
+                    ),
+
+                    # HALT / STOP MACHINES
+                    html.Div(
+                        className="card machine-detail-card halt-stop-detail-card",
+                        children=[
+                            halt_stop_machines_card_header(
+                                "Halt / Stop Machines",
+                                "Machines with temporarily interrupted active jobs",
+                            ),
+                            halt_stop_machines_table(
+                                halt_stop_detail,
+                                max_rows=None,
+                            ),
+                        ],
                     ),
                 ],
             ),

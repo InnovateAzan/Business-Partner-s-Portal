@@ -1003,8 +1003,13 @@ def machine_efficiency_chart(df):
 
     y_max = max(
         110.0,
-        max_efficiency + 12.0,
+        max_efficiency + 18.0,
     )
+
+    text_values = [
+        f"{float(value):.1f}%"
+        for value in chart_df["Efficiency %"]
+    ]
 
     fig = go.Figure()
 
@@ -1013,23 +1018,11 @@ def machine_efficiency_chart(df):
             x=chart_df["Machine Name"],
             y=chart_df["Efficiency %"],
 
-            width=0.56,
+            width=0.46,
 
             marker=dict(
                 color=bar_colors,
                 line=dict(width=0),
-            ),
-
-            text=[
-                f"{float(value):.1f}%"
-                for value in chart_df["Efficiency %"]
-            ],
-
-            textposition="outside",
-
-            textfont=dict(
-                size=10,
-                color="#0F172A",
             ),
 
             cliponaxis=False,
@@ -1044,6 +1037,23 @@ def machine_efficiency_chart(df):
         )
     )
 
+    fig.add_trace(
+        go.Scatter(
+            x=chart_df["Machine Name"],
+            y=chart_df["Efficiency %"] + 3.5,
+            mode="text",
+            text=text_values,
+            textposition="middle center",
+            textfont=dict(
+                size=10,
+                color="#0F172A",
+            ),
+            hoverinfo="skip",
+            showlegend=False,
+            cliponaxis=False,
+        )
+    )
+
     fig.update_layout(
         height=285,
         autosize=True,
@@ -1052,7 +1062,7 @@ def machine_efficiency_chart(df):
             l=34,
             r=18,
             t=30,
-            b=62,
+            b=76,
         ),
 
         paper_bgcolor="rgba(0,0,0,0)",
@@ -1060,7 +1070,8 @@ def machine_efficiency_chart(df):
 
         showlegend=False,
 
-        bargap=0.34,
+        bargap=0.28,
+        barcornerradius=7,
 
         font=dict(
             family="Inter, Arial, sans-serif",
@@ -1097,7 +1108,7 @@ def machine_efficiency_chart(df):
             title=None,
 
             range=[
-                0,
+                -5,
                 y_max,
             ],
 
@@ -1128,7 +1139,7 @@ def machine_efficiency_chart(df):
 
     machine_count = len(chart_df)
 
-    visible_count = 10
+    visible_count = 12
     graph_width_pct = 100 if machine_count <= visible_count else round(
         (machine_count / visible_count) * 100,
         2,

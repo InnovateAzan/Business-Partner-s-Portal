@@ -1,5 +1,6 @@
 from functools import lru_cache
 from datetime import datetime, date, timedelta
+import time
 
 import pandas as pd
 import psycopg2
@@ -17,6 +18,11 @@ from services.config import (
 
 DB_SCHEMA = "cableflow"
 EVENT_LOG_TABLE = "event_logs"
+
+
+def _dashboard_timing(label, start_time):
+    elapsed = time.perf_counter() - start_time
+    print(f"Dashboard Timing -> {label}: {elapsed:.2f}s")
 
 
 # ============================================================
@@ -52,7 +58,10 @@ def fetch_production_targets():
             {"work_center": "PCF", "target": 0, "actual": 55},
         ]
     """
+    start_time = time.perf_counter()
+
     if not PRODUCTION_TARGET_API:
+        _dashboard_timing("Production API", start_time)
         return []
 
     try:
@@ -100,24 +109,28 @@ def fetch_production_targets():
                 }
             )
 
+        _dashboard_timing("Production API", start_time)
         return cleaned
 
     except requests.RequestException as error:
         print(
             f"Production target API request error: {error}"
         )
+        _dashboard_timing("Production API", start_time)
         return []
 
     except ValueError as error:
         print(
             f"Production target API JSON error: {error}"
         )
+        _dashboard_timing("Production API", start_time)
         return []
 
     except Exception as error:
         print(
             f"Production target API error: {error}"
         )
+        _dashboard_timing("Production API", start_time)
         return []
 
 
@@ -227,6 +240,7 @@ def fetch_machine_efficiency(
     not SUM(event rows).
     """
 
+    start_time = time.perf_counter()
     conn = None
 
     try:
@@ -444,6 +458,7 @@ def fetch_machine_efficiency(
         return []
 
     finally:
+        _dashboard_timing("Efficiency", start_time)
         if conn:
             conn.close()
 
@@ -456,6 +471,7 @@ def fetch_machine_efficiency(
 @lru_cache(maxsize=64)
 def fetch_production_groups(created_from=None, created_to=None, plant="All"):
     """Return target/actual meters grouped by authoritative machine type."""
+    start_time = time.perf_counter()
     conn = None
     try:
         selected_plant = str(plant or "All").strip().upper()
@@ -513,6 +529,7 @@ def fetch_production_groups(created_from=None, created_to=None, plant="All"):
         traceback.print_exc()
         return {}
     finally:
+        _dashboard_timing("Production Groups", start_time)
         if conn:
             conn.close()
 
@@ -566,6 +583,7 @@ def fetch_operational_kpis(
       NOT guessed here until their authoritative DB mapping is confirmed.
     """
 
+    start_time = time.perf_counter()
     conn = None
 
     try:
@@ -1029,6 +1047,7 @@ def fetch_operational_kpis(
         }
 
     finally:
+        _dashboard_timing("Operational KPI", start_time)
         if conn:
             conn.close()
 
@@ -1341,6 +1360,7 @@ def fetch_dashboard_metadata(
     - Machine name is read from job_machines_master.
     """
 
+    start_time = time.perf_counter()
     conn = None
 
     try:
@@ -1789,5 +1809,6 @@ def fetch_dashboard_metadata(
         return []
 
     finally:
+        _dashboard_timing("Dashboard Metadata", start_time)
         if conn:
             conn.close()

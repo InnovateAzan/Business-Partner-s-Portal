@@ -44,9 +44,30 @@ app.layout = html.Div(
             className="main-content no-sidebar-main",
             children=[
                 topbar(filter_options),
-                html.Div(
-                    id="page-content",
-                    children=overview_page(DEFAULT_FILTERS),
+                dcc.Loading(
+                    id="dashboard-content-loader",
+                    type="circle",
+                    color="#05a845",
+                    fullscreen=False,
+                    className="dashboard-loading-shell",
+                    parent_className="dashboard-loading-parent",
+                    custom_spinner=html.Div(
+                        className="dashboard-loader",
+                        children=[
+                            html.Div(className="dashboard-loader-spinner"),
+                            html.Div(
+                                "Updating dashboard...",
+                                className="dashboard-loader-text",
+                            ),
+                        ],
+                    ),
+                    overlay_style={
+                        "visibility": "visible",
+                    },
+                    children=html.Div(
+                        id="page-content",
+                        children=overview_page(DEFAULT_FILTERS),
+                    ),
                 ),
             ],
         ),
@@ -82,7 +103,6 @@ def reset_filters(date_reset_clicks, refresh_clicks):
     triggered_id = ctx.triggered_id
 
     if triggered_id == "date-reset-btn":
-        clear_data_cache()
         return None, None, "", "All"
 
     if triggered_id == "refresh-btn":
@@ -90,7 +110,7 @@ def reset_filters(date_reset_clicks, refresh_clicks):
         clear_data_cache()
         return None, None, "", no_update
 
-    return no_update, no_update, no_update, no_update, no_update
+    return no_update, no_update, no_update, no_update
 
 
 @app.callback(
