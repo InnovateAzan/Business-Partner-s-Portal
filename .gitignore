@@ -1,0 +1,9 @@
+**/.env
+**/node_modules/
+**/dist/
+**/bin/
+**/obj/
+.vscode/
+.idea/
+*.user
+*.suo
