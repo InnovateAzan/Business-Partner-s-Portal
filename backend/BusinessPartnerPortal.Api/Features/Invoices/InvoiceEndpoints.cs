@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 
 using BusinessPartnerPortal.Api.Common;
 using BusinessPartnerPortal.Api.Data;
@@ -12,10 +13,6 @@ namespace BusinessPartnerPortal.Api.Features.Invoices;
 
 public static class InvoiceEndpoints
 {
-    // ============================================================
-    // MAP ENDPOINTS
-    // ============================================================
-
     public static IEndpointRouteBuilder MapInvoiceEndpoints(
         this IEndpointRouteBuilder app)
     {
@@ -23,10 +20,6 @@ public static class InvoiceEndpoints
             .MapGroup("/api/v1/invoices")
             .RequireAuthorization()
             .WithTags("Invoices");
-
-        // ========================================================
-        // MY INVOICES
-        // ========================================================
 
         group.MapGet(
             "/my",
@@ -83,10 +76,6 @@ public static class InvoiceEndpoints
                             x.IntegrationStatus,
                             x.SubmissionDate,
                             x.UpdatedAt,
-
-                            /*
-                             * Backward compatibility.
-                             */
                             x.PoNumber,
 
                             poNumbers =
@@ -104,10 +93,6 @@ public static class InvoiceEndpoints
                         }));
             });
 
-        // ========================================================
-        // GET INVOICE
-        // ========================================================
-
         group.MapGet(
             "/{id:guid}",
             async (
@@ -117,14 +102,14 @@ public static class InvoiceEndpoints
                 CancellationToken ct) =>
             {
                 var vendorId =
-                    await current
-                        .GetVendorIdAsync(ct);
+                    await current.GetVendorIdAsync(ct);
 
                 var invoice =
                     await db.Invoices
                         .FirstOrDefaultAsync(
                             x =>
                                 x.Id == id &&
+                                x.DeletedAt == null &&
                                 (
                                     current.IsAdmin ||
                                     x.VendorId == vendorId
@@ -142,7 +127,6 @@ public static class InvoiceEndpoints
                         invoice.InvoiceNumber,
                         invoice.InvoiceDate,
                         invoice.InvoiceAmount,
-
                         invoice.PoNumber,
 
                         poNumbers =
@@ -157,14 +141,42 @@ public static class InvoiceEndpoints
                         invoice.Status,
                         invoice.IntegrationStatus,
 
+                        rcvTransactionIds =
+                            await db
+                                .InvoiceLineGrnAllocations
+                                .Where(
+                                    x =>
+                                        x.InvoiceId ==
+                                        invoice.Id)
+                                .Select(
+                                    x =>
+                                        x.RcvTransactionId)
+                                .ToListAsync(ct),
+
+                        existingDocuments =
+                            await db.Documents
+                                .Where(
+                                    x =>
+                                        x.InvoiceId ==
+                                        invoice.Id)
+                                .OrderBy(
+                                    x =>
+                                        x.UploadedAt)
+                                .Select(
+                                    x => new
+                                    {
+                                        x.Id,
+                                        x.DocumentType,
+                                        x.OriginalFileName,
+                                        x.ContentType,
+                                        x.FileSize
+                                    })
+                                .ToListAsync(ct),
+
                         description =
                             invoice.Remarks
                     });
             });
-
-        // ========================================================
-        // HISTORY
-        // ========================================================
 
         group.MapGet(
             "/{id:guid}/history",
@@ -175,14 +187,14 @@ public static class InvoiceEndpoints
                 CancellationToken ct) =>
             {
                 var vendorId =
-                    await current
-                        .GetVendorIdAsync(ct);
+                    await current.GetVendorIdAsync(ct);
 
                 var exists =
                     await db.Invoices
                         .AnyAsync(
                             x =>
                                 x.Id == id &&
+                                x.DeletedAt == null &&
                                 (
                                     current.IsAdmin ||
                                     x.VendorId == vendorId
@@ -201,17 +213,12 @@ public static class InvoiceEndpoints
                         .InvoiceStatusHistory
                         .Where(
                             x =>
-                                x.InvoiceId ==
-                                id)
+                                x.InvoiceId == id)
                         .OrderBy(
                             x =>
                                 x.ChangedAt)
                         .ToListAsync(ct));
             });
-
-        // ========================================================
-        // SAVE DRAFT
-        // ========================================================
 
         group.MapPost(
                 "/draft",
@@ -238,10 +245,6 @@ public static class InvoiceEndpoints
                         ct))
             .DisableAntiforgery();
 
-        // ========================================================
-        // SUBMIT
-        // ========================================================
-
         group.MapPost(
                 "/",
                 async (
@@ -266,10 +269,6 @@ public static class InvoiceEndpoints
                         null,
                         ct))
             .DisableAntiforgery();
-
-        // ========================================================
-        // RESUBMIT
-        // ========================================================
 
         group.MapPost(
                 "/{id:guid}/resubmit",
@@ -297,12 +296,300 @@ public static class InvoiceEndpoints
                         ct))
             .DisableAntiforgery();
 
+        group.MapGet(
+            "/{id:guid}/issue",
+            async (
+                Guid id,
+                CurrentUser current,
+                AppDbContext db,
+                CancellationToken ct) =>
+            {
+                var vendorId =
+                    await current.GetVendorIdAsync(ct);
+
+                var invoice =
+                    await db.Invoices
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(
+                            x =>
+                                x.Id == id &&
+                                x.DeletedAt == null &&
+                                (
+                                    current.IsAdmin ||
+                                    x.VendorId == vendorId
+                                ),
+                            ct)
+                    ??
+                    throw new ApiException(
+                        404,
+                        "Invoice not found.");
+
+                var connection =
+                    db.Database.GetDbConnection();
+
+                if (
+                    connection.State !=
+                    System.Data.ConnectionState.Open)
+                {
+                    await connection.OpenAsync(ct);
+                }
+
+                string? reason = null;
+                long? oracleRequestId = null;
+                int? attemptCount = null;
+
+                await using (
+                    var command =
+                        connection.CreateCommand())
+                {
+                    command.CommandText =
+                        """
+                        SELECT
+                            last_error,
+                            oracle_request_id,
+                            attempt_count
+                        FROM
+                            integration.outbox_messages
+                        WHERE
+                            aggregate_id = @invoice_id
+                        AND
+                            event_type IN
+                            (
+                                'InvoiceSubmitted',
+                                'InvoiceResubmitted'
+                            )
+                        ORDER BY
+                            created_at DESC
+                        LIMIT 1
+                        """;
+
+                    var parameter =
+                        command.CreateParameter();
+
+                    parameter.ParameterName =
+                        "invoice_id";
+
+                    parameter.Value =
+                        id;
+
+                    command.Parameters.Add(
+                        parameter);
+
+                    await using var reader =
+                        await command
+                            .ExecuteReaderAsync(ct);
+
+                    if (
+                        await reader
+                            .ReadAsync(ct))
+                    {
+                        reason =
+                            reader.IsDBNull(0)
+                                ? null
+                                : reader.GetString(0);
+
+                        oracleRequestId =
+                            reader.IsDBNull(1)
+                                ? null
+                                : reader.GetInt64(1);
+
+                        attemptCount =
+                            reader.IsDBNull(2)
+                                ? null
+                                : reader.GetInt32(2);
+                    }
+                }
+
+                if (
+                    oracleRequestId is null &&
+                    !string.IsNullOrWhiteSpace(
+                        reason))
+                {
+                    var requestMatch =
+                        Regex.Match(
+                            reason,
+                            @"request\s+(\d+)",
+                            RegexOptions.IgnoreCase);
+
+                    if (
+                        requestMatch.Success &&
+                        long.TryParse(
+                            requestMatch
+                                .Groups[1]
+                                .Value,
+                            out var parsedRequestId))
+                    {
+                        oracleRequestId =
+                            parsedRequestId;
+                    }
+                }
+
+                return Results.Ok(
+                    new
+                    {
+                        invoiceId =
+                            invoice.Id,
+
+                        status =
+                            invoice.Status,
+
+                        integrationStatus =
+                            invoice.IntegrationStatus,
+
+                        reason,
+
+                        oracleRequestId,
+
+                        attemptCount
+                    });
+            });
+
+        group.MapDelete(
+            "/{id:guid}",
+            async (
+                Guid id,
+                CurrentUser current,
+                AppDbContext db,
+                CancellationToken ct) =>
+            {
+                await current.DemandAsync(
+                    "INVOICE.VIEW_OWN",
+                    ct);
+
+                var vendorId =
+                    await current.GetVendorIdAsync(ct);
+
+                var invoice =
+                    await db.Invoices
+                        .FirstOrDefaultAsync(
+                            x =>
+                                x.Id == id &&
+                                x.DeletedAt == null &&
+                                (
+                                    current.IsAdmin ||
+                                    x.VendorId == vendorId
+                                ),
+                            ct)
+                    ??
+                    throw new ApiException(
+                        404,
+                        "Invoice not found.");
+
+                var status =
+                    (
+                        invoice.Status
+                        ??
+                        string.Empty
+                    )
+                    .Trim()
+                    .ToUpperInvariant();
+
+                var integrationStatus =
+                    (
+                        invoice.IntegrationStatus
+                        ??
+                        string.Empty
+                    )
+                    .Trim()
+                    .ToUpperInvariant();
+
+                var canDelete =
+                    status == "CANCELLED"
+                    ||
+                    status == "INTEGRATION_FAILED"
+                    ||
+                    status == "FAILED"
+                    ||
+                    status == "ORACLE_REJECTED"
+                    ||
+                    status == "REJECTED"
+                    ||
+                    integrationStatus == "FAILED"
+                    ||
+                    integrationStatus == "INTEGRATION_FAILED";
+
+                if (!canDelete)
+                {
+                    throw new ApiException(
+                        409,
+                        "Only failed or Oracle-cancelled invoices can be deleted.");
+                }
+
+                var now =
+                    DateTimeOffset.UtcNow;
+
+                invoice.DeletedAt =
+                    now;
+
+                invoice.UpdatedAt =
+                    now;
+
+                await db.Database
+                    .ExecuteSqlInterpolatedAsync(
+                        $"""
+                        UPDATE
+                            integration.outbox_messages
+                        SET
+                            status = 'FAILED',
+                            next_attempt_at = NULL
+                        WHERE
+                            aggregate_id = {invoice.Id}
+                        AND
+                            status IN
+                            (
+                                'PENDING',
+                                'RETRYING',
+                                'PROCESSING',
+                                'FAILED'
+                            )
+                        """,
+                        ct);
+
+                db.InvoiceStatusHistory.Add(
+                    new InvoiceStatusHistory
+                    {
+                        InvoiceId =
+                            invoice.Id,
+
+                        OldStatus =
+                            invoice.Status,
+
+                        NewStatus =
+                            "DELETED",
+
+                        Remarks =
+                            status == "CANCELLED"
+                                ?
+                                "Oracle-cancelled invoice removed from portal history."
+                                :
+                                "Failed invoice removed from portal history.",
+
+                        Source =
+                            "PORTAL",
+
+                        ChangedBy =
+                            current.UserId,
+
+                        ChangedAt =
+                            now
+                    });
+
+                await db.SaveChangesAsync(
+                    ct);
+
+                return Results.Ok(
+                    new
+                    {
+                        deleted =
+                            true,
+
+                        id =
+                            invoice.Id
+                    });
+            });
+
         return app;
     }
-
-    // ============================================================
-    // SAVE
-    // ============================================================
 
     private static async Task<IResult> Save(
         HttpRequest request,
@@ -333,8 +620,7 @@ public static class InvoiceEndpoints
             await db.Vendors
                 .Where(
                     x =>
-                        x.Id ==
-                        vendorId)
+                        x.Id == vendorId)
                 .Select(
                     x =>
                         x.OracleVendorId)
@@ -350,8 +636,7 @@ public static class InvoiceEndpoints
                 "Oracle vendor mapping is missing or invalid.");
         }
 
-        if (
-            !request.HasFormContentType)
+        if (!request.HasFormContentType)
         {
             throw new ApiException(
                 400,
@@ -359,16 +644,22 @@ public static class InvoiceEndpoints
         }
 
         var form =
-            await request
-                .ReadFormAsync(ct);
+            await request.ReadFormAsync(ct);
 
-        var idempotencyKey = request.Headers["Idempotency-Key"].FirstOrDefault()?.Trim();
-        if (!draft && string.IsNullOrWhiteSpace(idempotencyKey))
-            throw new ApiException(400, "Idempotency-Key header is required for invoice submission.");
+        var idempotencyKey =
+            request.Headers["Idempotency-Key"]
+                .FirstOrDefault()
+                ?.Trim();
 
-        // ========================================================
-        // MULTI PO
-        // ========================================================
+        if (
+            !draft &&
+            string.IsNullOrWhiteSpace(
+                idempotencyKey))
+        {
+            throw new ApiException(
+                400,
+                "Idempotency-Key header is required for invoice submission.");
+        }
 
         var poNumbers =
             form["poNumbers"]
@@ -378,23 +669,13 @@ public static class InvoiceEndpoints
                         "")
                 .Where(
                     x =>
-                        x.Length >
-                        0)
+                        x.Length > 0)
                 .Distinct(
-                    StringComparer
-                        .OrdinalIgnoreCase)
+                    StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-        /*
-         * Backward compatibility:
-         * old frontend sends poNumber.
-         *
-         * New frontend also sends
-         * poNumber as comma separated.
-         */
         if (
-            poNumbers.Count ==
-            0)
+            poNumbers.Count == 0)
         {
             var legacyPoValue =
                 form["poNumber"]
@@ -404,27 +685,19 @@ public static class InvoiceEndpoints
                 "";
 
             if (
-                legacyPoValue.Length >
-                0)
+                legacyPoValue.Length > 0)
             {
                 poNumbers =
                     legacyPoValue
                         .Split(
                             ',',
-                            StringSplitOptions
-                                .RemoveEmptyEntries |
-                            StringSplitOptions
-                                .TrimEntries)
+                            StringSplitOptions.RemoveEmptyEntries |
+                            StringSplitOptions.TrimEntries)
                         .Distinct(
-                            StringComparer
-                                .OrdinalIgnoreCase)
+                            StringComparer.OrdinalIgnoreCase)
                         .ToList();
             }
         }
-
-        // ========================================================
-        // GRNS
-        // ========================================================
 
         var grnNumbers =
             form["grnNumbers"]
@@ -434,22 +707,40 @@ public static class InvoiceEndpoints
                         "")
                 .Where(
                     x =>
-                        x.Length >
-                        0)
+                        x.Length > 0)
                 .Distinct(
-                    StringComparer
-                        .OrdinalIgnoreCase)
+                    StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-        var rcvTransactionIds = form["rcvTransactionIds"]
-            .Select(x => long.TryParse(x, out var id) ? id : 0L)
-            .Where(x => x > 0)
-            .Distinct()
-            .ToList();
+        var rcvTransactionIds =
+            form["rcvTransactionIds"]
+                .Select(
+                    x =>
+                        long.TryParse(
+                            x,
+                            out var id)
+                            ? id
+                            : 0L)
+                .Where(
+                    x =>
+                        x > 0)
+                .Distinct()
+                .ToList();
 
-        // ========================================================
-        // INVOICE FIELDS
-        // ========================================================
+        var removeDocumentIds =
+            form["removeDocumentIds"]
+                .Select(
+                    x =>
+                        Guid.TryParse(
+                            x,
+                            out var id)
+                            ? id
+                            : Guid.Empty)
+                .Where(
+                    x =>
+                        x != Guid.Empty)
+                .Distinct()
+                .ToList();
 
         var invoiceNumber =
             form["invoiceNumber"]
@@ -504,22 +795,14 @@ public static class InvoiceEndpoints
                 :
                 0m;
 
-        // ========================================================
-        // BASIC VALIDATION
-        // ========================================================
-
         if (
             !draft &&
             (
-                poNumbers.Count ==
-                    0 ||
-                invoiceNumber.Length ==
-                    0 ||
+                poNumbers.Count == 0 ||
+                invoiceNumber.Length == 0 ||
                 invoiceDate is null ||
-                invoiceAmount <=
-                    0 ||
-                grnNumbers.Count ==
-                    0 ||
+                invoiceAmount <= 0 ||
+                grnNumbers.Count == 0 ||
                 rcvTransactionIds.Count == 0
             ))
         {
@@ -529,24 +812,16 @@ public static class InvoiceEndpoints
         }
 
         if (
-            invoiceType !=
-                "GOODS" &&
-            invoiceType !=
-                "SERVICE")
+            invoiceType != "GOODS" &&
+            invoiceType != "SERVICE")
         {
             throw new ApiException(
                 400,
                 "Invoice type must be GOODS or SERVICE.");
         }
 
-        // ========================================================
-        // VALIDATE ALL SELECTED POS / GRNS AGAINST ORACLE
-        // ========================================================
-
         var allOracleRows =
-            new List<
-                OraclePoGrnDto
-            >();
+            new List<OraclePoGrnDto>();
 
         foreach (
             var poNumber in
@@ -560,35 +835,116 @@ public static class InvoiceEndpoints
                         ct);
 
             if (
-                oracleRows.Count ==
-                0)
+                oracleRows.Count == 0)
             {
                 throw new ApiException(
                     400,
                     $"PO {poNumber} is not available for this vendor in Oracle.");
             }
 
-            allOracleRows
-                .AddRange(
-                    oracleRows);
+            allOracleRows.AddRange(
+                oracleRows);
         }
 
-        var selectedReceiptLines = new List<OracleReceiptLine>();
+        var selectedReceiptLines =
+            new List<OracleReceiptLine>();
+
         if (!draft)
         {
-            var ap = new OracleApInvoiceService(oracleOptions, oracle, config, Microsoft.Extensions.Logging.Abstractions.NullLogger<OracleApInvoiceService>.Instance);
-            foreach (var poNumber in poNumbers)
+            var ap =
+                new OracleApInvoiceService(
+                    oracleOptions,
+                    oracle,
+                    config,
+                    Microsoft.Extensions.Logging
+                        .Abstractions
+                        .NullLogger<OracleApInvoiceService>
+                        .Instance);
+
+            foreach (
+                var poNumber in
+                poNumbers)
             {
-                var poGrns = grnNumbers.Where(g => allOracleRows.Any(r => r.PoNumber == poNumber && string.Equals(r.GrnNumber, g, StringComparison.OrdinalIgnoreCase))).ToList();
-                if (poGrns.Count == 0) continue;
-                var lines = await ap.GetReceiptLinesForPortalAsync(oracleVendorId, poNumber, poGrns, ct);
-                selectedReceiptLines.AddRange(lines.Where(x => rcvTransactionIds.Contains(x.RcvTransactionId)));
+                var poGrns =
+                    grnNumbers
+                        .Where(
+                            g =>
+                                allOracleRows.Any(
+                                    r =>
+                                        r.PoNumber == poNumber
+                                        &&
+                                        string.Equals(
+                                            r.GrnNumber,
+                                            g,
+                                            StringComparison.OrdinalIgnoreCase)))
+                        .ToList();
+
+                if (
+                    poGrns.Count == 0)
+                {
+                    continue;
+                }
+
+                var lines =
+                    await ap.GetReceiptLinesForPortalAsync(
+                        oracleVendorId,
+                        poNumber,
+                        poGrns,
+                        ct);
+
+                selectedReceiptLines
+                    .AddRange(
+                        lines.Where(
+                            x =>
+                                rcvTransactionIds
+                                    .Contains(
+                                        x.RcvTransactionId)));
             }
-            var resolvedIds = selectedReceiptLines.Select(x => x.RcvTransactionId).Distinct().ToHashSet();
-            var missingIds = rcvTransactionIds.Where(x => !resolvedIds.Contains(x)).ToList();
-            if (missingIds.Count > 0) throw new ApiException(409, $"Selected receipt line(s) are no longer available: {string.Join(", ", missingIds)}");
-            var selectedGrns = selectedReceiptLines.Select(x => x.GrnNumber).Distinct(StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (grnNumbers.Any(x => !selectedGrns.Contains(x))) throw new ApiException(409, "One or more selected GRNs do not contain an eligible selected receipt line.");
+
+            var resolvedIds =
+                selectedReceiptLines
+                    .Select(
+                        x =>
+                            x.RcvTransactionId)
+                    .Distinct()
+                    .ToHashSet();
+
+            var missingIds =
+                rcvTransactionIds
+                    .Where(
+                        x =>
+                            !resolvedIds.Contains(
+                                x))
+                    .ToList();
+
+            if (
+                missingIds.Count > 0)
+            {
+                throw new ApiException(
+                    409,
+                    $"Selected receipt line(s) are no longer available: {string.Join(", ", missingIds)}");
+            }
+
+            var selectedGrns =
+                selectedReceiptLines
+                    .Select(
+                        x =>
+                            x.GrnNumber)
+                    .Distinct(
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToHashSet(
+                        StringComparer.OrdinalIgnoreCase);
+
+            if (
+                grnNumbers.Any(
+                    x =>
+                        !selectedGrns.Contains(
+                            x)))
+            {
+                throw new ApiException(
+                    409,
+                    "One or more selected GRNs do not contain an eligible selected receipt line.");
+            }
         }
 
         foreach (
@@ -602,13 +958,11 @@ public static class InvoiceEndpoints
                             string.Equals(
                                 x.GrnNumber,
                                 grnNumber,
-                                StringComparison
-                                    .OrdinalIgnoreCase))
+                                StringComparison.OrdinalIgnoreCase))
                     .ToList();
 
             if (
-                matchingRows.Count ==
-                0)
+                matchingRows.Count == 0)
             {
                 throw new ApiException(
                     400,
@@ -653,8 +1007,7 @@ public static class InvoiceEndpoints
                         });
 
             if (
-                validRow is
-                not null)
+                validRow is not null)
             {
                 continue;
             }
@@ -692,44 +1045,28 @@ public static class InvoiceEndpoints
                 $"GRN {grnNumber} has no available quantity to invoice.");
         }
 
-        // ========================================================
-        // DUPLICATE INVOICE
-        // ========================================================
-
         var duplicate =
             await db.Invoices
                 .AnyAsync(
                     x =>
-                        x.VendorId ==
-                            vendorId &&
-                        x.DeletedAt ==
-                            null &&
-                        x.InvoiceNumber
-                            .ToLower() ==
-                        invoiceNumber
-                            .ToLower() &&
+                        x.VendorId == vendorId &&
+                        x.DeletedAt == null &&
+                        x.InvoiceNumber.ToLower() ==
+                        invoiceNumber.ToLower() &&
                         (
-                            !resubmitId
-                                .HasValue ||
-                            x.Id !=
-                                resubmitId
-                                    .Value
+                            !resubmitId.HasValue ||
+                            x.Id != resubmitId.Value
                         ),
                     ct);
 
         if (
-            invoiceNumber.Length >
-                0 &&
+            invoiceNumber.Length > 0 &&
             duplicate)
         {
             throw new ApiException(
                 409,
                 "This invoice number already exists for the vendor.");
         }
-
-        // ========================================================
-        // FILES
-        // ========================================================
 
         var invoiceFiles =
             form.Files
@@ -743,17 +1080,14 @@ public static class InvoiceEndpoints
                     "deliveryChallanFiles")
                 .ToList();
 
-        // Backward compatibility.
         var legacyInvoiceFile =
             form.Files
                 .GetFile(
                     "invoiceFile");
 
         if (
-            legacyInvoiceFile is
-                not null &&
-            invoiceFiles.Count ==
-                0)
+            legacyInvoiceFile is not null &&
+            invoiceFiles.Count == 0)
         {
             invoiceFiles.Add(
                 legacyInvoiceFile);
@@ -765,22 +1099,15 @@ public static class InvoiceEndpoints
                     "deliveryChallanFile");
 
         if (
-            legacyDeliveryChallanFile is
-                not null &&
-            deliveryChallanFiles.Count ==
-                0)
+            legacyDeliveryChallanFile is not null &&
+            deliveryChallanFiles.Count == 0)
         {
             deliveryChallanFiles.Add(
                 legacyDeliveryChallanFile);
         }
 
-        /*
-         * Invoice Copy:
-         * exactly one new file max.
-         */
         if (
-            invoiceFiles.Count >
-            1)
+            invoiceFiles.Count > 1)
         {
             throw new ApiException(
                 400,
@@ -789,28 +1116,19 @@ public static class InvoiceEndpoints
 
         if (
             !draft &&
-            invoiceFiles.Count ==
-                0 &&
-            resubmitId is
-                null)
+            invoiceFiles.Count == 0 &&
+            resubmitId is null)
         {
             throw new ApiException(
                 400,
                 "Invoice Copy is required.");
         }
 
-        /*
-         * DC:
-         * multiple files allowed.
-         */
         if (
             !draft &&
-            invoiceType ==
-                "GOODS" &&
-            deliveryChallanFiles.Count ==
-                0 &&
-            resubmitId is
-                null)
+            invoiceType == "GOODS" &&
+            deliveryChallanFiles.Count == 0 &&
+            resubmitId is null)
         {
             throw new ApiException(
                 400,
@@ -824,7 +1142,13 @@ public static class InvoiceEndpoints
             ValidateFile(
                 file,
                 config);
-            await BusinessPartnerPortal.Api.Services.FileSignatureValidator.ValidateAsync(file, ct);
+
+            await BusinessPartnerPortal.Api
+                .Services
+                .FileSignatureValidator
+                .ValidateAsync(
+                    file,
+                    ct);
         }
 
         foreach (
@@ -834,29 +1158,65 @@ public static class InvoiceEndpoints
             ValidateFile(
                 file,
                 config);
-            await BusinessPartnerPortal.Api.Services.FileSignatureValidator.ValidateAsync(file, ct);
-        }
 
-        // ========================================================
-        // DATABASE TRANSACTION
-        // ========================================================
+            await BusinessPartnerPortal.Api
+                .Services
+                .FileSignatureValidator
+                .ValidateAsync(
+                    file,
+                    ct);
+        }
 
         await using var transaction =
             await db.Database
                 .BeginTransactionAsync(ct);
 
         var now =
-            DateTimeOffset
-                .UtcNow;
+            DateTimeOffset.UtcNow;
 
-        if (!draft && !string.IsNullOrWhiteSpace(idempotencyKey))
+        if (
+            !draft &&
+            !string.IsNullOrWhiteSpace(
+                idempotencyKey))
         {
-            var operation = resubmitId.HasValue ? "INVOICE_RESUBMIT" : "INVOICE_SUBMIT";
-            var existingRequest = await db.IdempotencyRequests.AsNoTracking().FirstOrDefaultAsync(x => x.UserId == current.UserId && x.Operation == operation && x.IdempotencyKey == idempotencyKey, ct);
-            if (existingRequest?.AggregateId is Guid existingInvoiceId)
+            var operation =
+                resubmitId.HasValue
+                    ?
+                    "INVOICE_RESUBMIT"
+                    :
+                    "INVOICE_SUBMIT";
+
+            var existingRequest =
+                await db.IdempotencyRequests
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(
+                        x =>
+                            x.UserId ==
+                            current.UserId
+                            &&
+                            x.Operation ==
+                            operation
+                            &&
+                            x.IdempotencyKey ==
+                            idempotencyKey,
+                        ct);
+
+            if (
+                existingRequest?.AggregateId
+                is Guid existingInvoiceId)
             {
-                await transaction.RollbackAsync(ct);
-                return Results.Ok(new { id = existingInvoiceId, duplicateRequest = true });
+                await transaction
+                    .RollbackAsync(ct);
+
+                return Results.Ok(
+                    new
+                    {
+                        id =
+                            existingInvoiceId,
+
+                        duplicateRequest =
+                            true
+                    });
             }
         }
 
@@ -875,44 +1235,74 @@ public static class InvoiceEndpoints
                 ',',
                 grnNumbers);
 
-        // ========================================================
-        // RESUBMIT
-        // ========================================================
-
         if (
-            resubmitId
-                .HasValue)
+            resubmitId.HasValue)
         {
             invoice =
                 await db.Invoices
                     .FirstOrDefaultAsync(
                         x =>
                             x.Id ==
-                                resubmitId
-                                    .Value &&
+                            resubmitId.Value
+                            &&
                             x.VendorId ==
-                                vendorId,
+                            vendorId
+                            &&
+                            x.DeletedAt ==
+                            null,
                         ct)
                 ??
                 throw new ApiException(
                     404,
                     "Invoice not found.");
 
-            if (
-                invoice.Status !=
-                "RETURNED")
+            var currentStatus =
+                (
+                    invoice.Status
+                    ??
+                    string.Empty
+                )
+                .Trim()
+                .ToUpperInvariant();
+
+            var currentIntegrationStatus =
+                (
+                    invoice.IntegrationStatus
+                    ??
+                    string.Empty
+                )
+                .Trim()
+                .ToUpperInvariant();
+
+            var canResubmit =
+                currentStatus == "RETURNED"
+                ||
+                currentStatus == "INTEGRATION_FAILED"
+                ||
+                currentStatus == "ORACLE_REJECTED"
+                ||
+                currentStatus == "FAILED"
+                ||
+                currentStatus == "REJECTED"
+                ||
+                currentStatus == "CANCELLED"
+                ||
+                currentIntegrationStatus == "FAILED"
+                ||
+                currentIntegrationStatus == "INTEGRATION_FAILED";
+
+            if (!canResubmit)
             {
                 throw new ApiException(
                     409,
-                    "Only returned invoices can be resubmitted.");
+                    "Only returned, cancelled or action-required invoices can be resubmitted.");
             }
 
             oldStatus =
                 invoice.Status;
 
             invoice.InvoiceNumber =
-                invoiceNumber.Length >
-                0
+                invoiceNumber.Length > 0
                     ?
                     invoiceNumber
                     :
@@ -924,24 +1314,21 @@ public static class InvoiceEndpoints
                 invoice.InvoiceDate;
 
             if (
-                invoiceAmount >
-                0)
+                invoiceAmount > 0)
             {
                 invoice.InvoiceAmount =
                     invoiceAmount;
             }
 
             if (
-                poNumbers.Count >
-                0)
+                poNumbers.Count > 0)
             {
                 invoice.PoNumber =
                     storedPoNumbers;
             }
 
             if (
-                grnNumbers.Count >
-                0)
+                grnNumbers.Count > 0)
             {
                 invoice.GrnNumbers =
                     storedGrnNumbers;
@@ -951,8 +1338,7 @@ public static class InvoiceEndpoints
                 invoiceType;
 
             invoice.Remarks =
-                description.Length >
-                0
+                description.Length > 0
                     ?
                     description
                     :
@@ -970,11 +1356,6 @@ public static class InvoiceEndpoints
             invoice.UpdatedAt =
                 now;
         }
-
-        // ========================================================
-        // NEW
-        // ========================================================
-
         else
         {
             invoice =
@@ -998,11 +1379,6 @@ public static class InvoiceEndpoints
                     CurrencyCode =
                         "PKR",
 
-                    /*
-                     * Multiple POs stored
-                     * comma-separated for
-                     * backward compatibility.
-                     */
                     PoNumber =
                         storedPoNumbers,
 
@@ -1013,8 +1389,7 @@ public static class InvoiceEndpoints
                         invoiceType,
 
                     Remarks =
-                        description.Length >
-                        0
+                        description.Length > 0
                             ?
                             description
                             :
@@ -1055,51 +1430,202 @@ public static class InvoiceEndpoints
                 invoice);
         }
 
-        // ========================================================
-        // SAVE PARENT INVOICE FIRST
-        // ========================================================
-        //
-        // Documents, GRN allocations, status history and
-        // idempotency records all reference invoice.invoices.
-        // Saving the parent row first prevents FK violations such
-        // as fk_document_invoice. This is still inside the same
-        // database transaction, so any later failure rolls back
-        // the invoice as well.
-        // ========================================================
+        if (
+            resubmitId.HasValue &&
+            removeDocumentIds.Count > 0)
+        {
+            var documentsToRemove =
+                await db.Documents
+                    .Where(
+                        x =>
+                            x.InvoiceId == invoice.Id &&
+                            removeDocumentIds.Contains(x.Id))
+                    .ToListAsync(ct);
+
+            if (
+                documentsToRemove.Count !=
+                removeDocumentIds.Count)
+            {
+                throw new ApiException(
+                    400,
+                    "One or more selected attachments could not be removed because they do not belong to this invoice.");
+            }
+
+            db.Documents.RemoveRange(
+                documentsToRemove);
+        }
+
+        if (resubmitId.HasValue && !draft)
+        {
+            var remainingDocumentTypes =
+                await db.Documents
+                    .Where(
+                        x =>
+                            x.InvoiceId == invoice.Id &&
+                            !removeDocumentIds.Contains(x.Id))
+                    .Select(
+                        x =>
+                            x.DocumentType)
+                    .ToListAsync(ct);
+
+            var willHaveInvoiceCopy =
+                invoiceFiles.Count > 0 ||
+                remainingDocumentTypes.Any(
+                    x =>
+                        x == "INVOICE");
+
+            if (!willHaveInvoiceCopy)
+            {
+                throw new ApiException(
+                    400,
+                    "Invoice Copy is required. Upload a replacement before removing the existing Invoice Copy.");
+            }
+
+            var willHaveDeliveryChallan =
+                deliveryChallanFiles.Count > 0 ||
+                remainingDocumentTypes.Any(
+                    x =>
+                        x == "DELIVERY_CHALLAN");
+
+            if (
+                invoiceType == "GOODS" &&
+                !willHaveDeliveryChallan)
+            {
+                throw new ApiException(
+                    400,
+                    "At least one Receipted Delivery Challan is mandatory for goods invoices. Upload a replacement before removing the existing Delivery Challan.");
+            }
+        }
 
         await db.SaveChangesAsync(ct);
 
         if (!draft)
         {
-            foreach (var line in selectedReceiptLines.OrderBy(x => x.RcvTransactionId))
+            foreach (
+                var line in
+                selectedReceiptLines
+                    .OrderBy(
+                        x =>
+                            x.RcvTransactionId))
             {
-                await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({line.RcvTransactionId})", ct);
-                var alreadyAllocated = await db.InvoiceLineGrnAllocations
-                    .Where(x => x.RcvTransactionId == line.RcvTransactionId && x.InvoiceId != invoice.Id)
-                    .Join(db.Invoices.Where(i => i.DeletedAt == null && i.Status != "CANCELLED" && i.Status != "INTEGRATION_FAILED"), a => a.InvoiceId, i => i.Id, (a, i) => a.AllocatedQuantity)
-                    .SumAsync(ct);
-                var requestedQty = line.AvailableQuantity;
-                if (alreadyAllocated + requestedQty > line.AvailableQuantity)
-                    throw new ApiException(409, $"GRN {line.GrnNumber} line {line.PoLineNumber} no longer has enough available quantity.");
+                await db.Database
+                    .ExecuteSqlInterpolatedAsync(
+                        $"SELECT pg_advisory_xact_lock({line.RcvTransactionId})",
+                        ct);
+
+                var alreadyAllocated =
+                    await db
+                        .InvoiceLineGrnAllocations
+                        .Where(
+                            x =>
+                                x.RcvTransactionId ==
+                                line.RcvTransactionId
+                                &&
+                                x.InvoiceId !=
+                                invoice.Id)
+                        .Join(
+                            db.Invoices.Where(
+                                i =>
+                                    i.DeletedAt == null
+                                    &&
+                                    i.Status != "CANCELLED"
+                                    &&
+                                    i.Status != "INTEGRATION_FAILED"),
+                            a =>
+                                a.InvoiceId,
+                            i =>
+                                i.Id,
+                            (a, i) =>
+                                a.AllocatedQuantity)
+                        .SumAsync(ct);
+
+                var requestedQty =
+                    line.AvailableQuantity;
+
+                if (
+                    alreadyAllocated +
+                    requestedQty >
+                    line.AvailableQuantity)
+                {
+                    throw new ApiException(
+                        409,
+                        $"GRN {line.GrnNumber} line {line.PoLineNumber} no longer has enough available quantity.");
+                }
             }
 
-            var oldAllocations = await db.InvoiceLineGrnAllocations.Where(x => x.InvoiceId == invoice.Id).ToListAsync(ct);
-            db.InvoiceLineGrnAllocations.RemoveRange(oldAllocations);
-            foreach (var line in selectedReceiptLines)
+            var oldAllocations =
+                await db
+                    .InvoiceLineGrnAllocations
+                    .Where(
+                        x =>
+                            x.InvoiceId ==
+                            invoice.Id)
+                    .ToListAsync(ct);
+
+            db.InvoiceLineGrnAllocations
+                .RemoveRange(
+                    oldAllocations);
+
+            foreach (
+                var line in
+                selectedReceiptLines)
             {
-                db.InvoiceLineGrnAllocations.Add(new InvoiceLineGrnAllocation
-                {
-                    Id = Guid.NewGuid(), InvoiceId = invoice.Id, VendorId = vendorId, PoNumber = line.PoNumber, GrnNumber = line.GrnNumber,
-                    RcvTransactionId = line.RcvTransactionId, PoHeaderId = line.PoHeaderId, PoLineId = line.PoLineId, PoLineNumber = line.PoLineNumber,
-                    PoLineLocationId = line.PoLineLocationId, ReceivedQuantity = line.ReceivedQuantity, AvailableQuantityAtSubmit = line.AvailableQuantity,
-                    AllocatedQuantity = line.AvailableQuantity, UnitPrice = line.UnitPrice, AllocatedAmount = line.ExtendedAmount, MatchOption = line.MatchOption, CreatedAt = now
-                });
+                db.InvoiceLineGrnAllocations.Add(
+                    new InvoiceLineGrnAllocation
+                    {
+                        Id =
+                            Guid.NewGuid(),
+
+                        InvoiceId =
+                            invoice.Id,
+
+                        VendorId =
+                            vendorId,
+
+                        PoNumber =
+                            line.PoNumber,
+
+                        GrnNumber =
+                            line.GrnNumber,
+
+                        RcvTransactionId =
+                            line.RcvTransactionId,
+
+                        PoHeaderId =
+                            line.PoHeaderId,
+
+                        PoLineId =
+                            line.PoLineId,
+
+                        PoLineNumber =
+                            line.PoLineNumber,
+
+                        PoLineLocationId =
+                            line.PoLineLocationId,
+
+                        ReceivedQuantity =
+                            line.ReceivedQuantity,
+
+                        AvailableQuantityAtSubmit =
+                            line.AvailableQuantity,
+
+                        AllocatedQuantity =
+                            line.AvailableQuantity,
+
+                        UnitPrice =
+                            line.UnitPrice,
+
+                        AllocatedAmount =
+                            line.ExtendedAmount,
+
+                        MatchOption =
+                            line.MatchOption,
+
+                        CreatedAt =
+                            now
+                    });
             }
         }
-
-        // ========================================================
-        // STATUS HISTORY
-        // ========================================================
 
         db.InvoiceStatusHistory.Add(
             new InvoiceStatusHistory
@@ -1122,10 +1648,6 @@ public static class InvoiceEndpoints
                 Source =
                     "PORTAL"
             });
-
-        // ========================================================
-        // DOCUMENTS
-        // ========================================================
 
         foreach (
             var file in
@@ -1155,29 +1677,101 @@ public static class InvoiceEndpoints
                 ct);
         }
 
-        if (!draft && !string.IsNullOrWhiteSpace(idempotencyKey))
+        if (
+            !draft &&
+            !string.IsNullOrWhiteSpace(
+                idempotencyKey))
         {
-            var operation = resubmitId.HasValue ? "INVOICE_RESUBMIT" : "INVOICE_SUBMIT";
-            var hashInput = $"{vendorId}|{invoiceNumber.Trim().ToUpperInvariant()}|{invoiceDate}|{invoiceAmount}|{string.Join(",", rcvTransactionIds.OrderBy(x => x))}";
-            var requestHash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(hashInput))).ToLowerInvariant();
-            db.IdempotencyRequests.Add(new IdempotencyRequest { Id = Guid.NewGuid(), UserId = current.UserId, VendorId = vendorId, IdempotencyKey = idempotencyKey!, Operation = operation, RequestHash = requestHash, AggregateId = invoice.Id, ResponseStatus = 200, CreatedAt = now, ExpiresAt = now.AddHours(24) });
+            var operation =
+                resubmitId.HasValue
+                    ?
+                    "INVOICE_RESUBMIT"
+                    :
+                    "INVOICE_SUBMIT";
+
+            var hashInput =
+                $"{vendorId}|{invoiceNumber.Trim().ToUpperInvariant()}|{invoiceDate}|{invoiceAmount}|{string.Join(",", rcvTransactionIds.OrderBy(x => x))}";
+
+            var requestHash =
+                Convert
+                    .ToHexString(
+                        SHA256.HashData(
+                            System.Text.Encoding.UTF8
+                                .GetBytes(
+                                    hashInput)))
+                    .ToLowerInvariant();
+
+            db.IdempotencyRequests.Add(
+                new IdempotencyRequest
+                {
+                    Id =
+                        Guid.NewGuid(),
+
+                    UserId =
+                        current.UserId,
+
+                    VendorId =
+                        vendorId,
+
+                    IdempotencyKey =
+                        idempotencyKey!,
+
+                    Operation =
+                        operation,
+
+                    RequestHash =
+                        requestHash,
+
+                    AggregateId =
+                        invoice.Id,
+
+                    ResponseStatus =
+                        200,
+
+                    CreatedAt =
+                        now,
+
+                    ExpiresAt =
+                        now.AddHours(
+                            24)
+                });
         }
 
-        await db
-            .SaveChangesAsync(ct);
+        await db.SaveChangesAsync(ct);
 
-        await db.Database.ExecuteSqlInterpolatedAsync($@"INSERT INTO audit.audit_logs (user_id, action, entity_type, entity_id, correlation_id, created_at) VALUES ({current.UserId}, {(draft ? "INVOICE_DRAFT_CREATED" : resubmitId.HasValue ? "INVOICE_RESUBMITTED" : "INVOICE_SUBMITTED")}, {"Invoice"}, {invoice.Id}, {Guid.NewGuid()}, {now})", ct);
-
-        // ========================================================
-        // OUTBOX
-        // ========================================================
+        await db.Database
+            .ExecuteSqlInterpolatedAsync(
+                $"""
+                INSERT INTO
+                    audit.audit_logs
+                    (
+                        user_id,
+                        action,
+                        entity_type,
+                        entity_id,
+                        correlation_id,
+                        created_at
+                    )
+                VALUES
+                    (
+                        {current.UserId},
+                        {(draft ? "INVOICE_DRAFT_CREATED" : resubmitId.HasValue ? "INVOICE_RESUBMITTED" : "INVOICE_SUBMITTED")},
+                        {"Invoice"},
+                        {invoice.Id},
+                        {Guid.NewGuid()},
+                        {now}
+                    )
+                """,
+                ct);
 
         if (!draft)
         {
             var eventType =
                 resubmitId.HasValue
-                    ? "InvoiceResubmitted"
-                    : "InvoiceSubmitted";
+                    ?
+                    "InvoiceResubmitted"
+                    :
+                    "InvoiceSubmitted";
 
             var payload =
                 System.Text.Json
@@ -1192,23 +1786,13 @@ public static class InvoiceEndpoints
 
                             oracleVendorId,
 
-                            /*
-                             * New multi PO payload.
-                             */
                             poNumbers,
 
-                            /*
-                             * Legacy field remains available.
-                             */
                             poNumber =
                                 storedPoNumbers,
 
                             grnNumbers,
 
-                            /*
-                             * Exact Oracle receiving transaction IDs
-                             * selected by the vendor.
-                             */
                             rcvTransactionIds,
 
                             invoiceNumber =
@@ -1235,30 +1819,33 @@ public static class InvoiceEndpoints
 
             await db.Database
                 .ExecuteSqlInterpolatedAsync(
-                    $@"INSERT INTO integration.outbox_messages
-                       (
-                           id,
-                           event_type,
-                           aggregate_type,
-                           aggregate_id,
-                           payload,
-                           status,
-                           attempt_count,
-                           correlation_id,
-                           created_at
-                       )
-                       VALUES
-                       (
-                           {outboxId},
-                           {eventType},
-                           {"Invoice"},
-                           {invoice.Id},
-                           {payload}::jsonb,
-                           {"PENDING"},
-                           0,
-                           {outboxCorrelationId},
-                           {now}
-                       )",
+                    $"""
+                    INSERT INTO
+                        integration.outbox_messages
+                        (
+                            id,
+                            event_type,
+                            aggregate_type,
+                            aggregate_id,
+                            payload,
+                            status,
+                            attempt_count,
+                            correlation_id,
+                            created_at
+                        )
+                    VALUES
+                        (
+                            {outboxId},
+                            {eventType},
+                            {"Invoice"},
+                            {invoice.Id},
+                            {payload}::jsonb,
+                            {"PENDING"},
+                            0,
+                            {outboxCorrelationId},
+                            {now}
+                        )
+                    """,
                     ct);
         }
 
@@ -1290,10 +1877,6 @@ public static class InvoiceEndpoints
             });
     }
 
-    // ============================================================
-    // FILE VALIDATION
-    // ============================================================
-
     private static void ValidateFile(
         IFormFile? file,
         IConfiguration config)
@@ -1314,22 +1897,17 @@ public static class InvoiceEndpoints
                 :
                 1;
 
-        /*
-         * Current requirement:
-         * max 1 MB.
-         */
         var maxMb =
             Math.Min(
                 configuredMaxMb,
                 1);
 
         if (
-            file.Length <=
-                0 ||
+            file.Length <= 0 ||
             file.Length >
-                maxMb *
-                1024L *
-                1024L)
+            maxMb *
+            1024L *
+            1024L)
         {
             throw new ApiException(
                 400,
@@ -1357,10 +1935,6 @@ public static class InvoiceEndpoints
                 "Only PDF, PNG, JPG and JPEG files are allowed.");
         }
     }
-
-    // ============================================================
-    // ADD DOCUMENT
-    // ============================================================
 
     private static async Task AddDoc(
         AppDbContext db,
@@ -1427,10 +2001,6 @@ public static class InvoiceEndpoints
             });
     }
 
-    // ============================================================
-    // CSV HELPER
-    // ============================================================
-
     private static string[] SplitCsv(
         string? value)
     {
@@ -1440,13 +2010,10 @@ public static class InvoiceEndpoints
         )
         .Split(
             ',',
-            StringSplitOptions
-                .RemoveEmptyEntries |
-            StringSplitOptions
-                .TrimEntries)
+            StringSplitOptions.RemoveEmptyEntries |
+            StringSplitOptions.TrimEntries)
         .Distinct(
-            StringComparer
-                .OrdinalIgnoreCase)
+            StringComparer.OrdinalIgnoreCase)
         .ToArray();
     }
 }

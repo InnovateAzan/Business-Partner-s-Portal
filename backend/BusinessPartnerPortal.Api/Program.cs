@@ -53,6 +53,23 @@ Log.Logger =
 
 builder.Host.UseSerilog();
 
+var loginOtpEnabled =
+    !bool.TryParse(
+        builder.Configuration[
+            "LOGIN_OTP_ENABLED"
+        ],
+        out var configuredLoginOtpEnabled
+    )
+    ||
+    configuredLoginOtpEnabled;
+
+if (!loginOtpEnabled)
+{
+    Log.Warning(
+        "WARNING: Login OTP verification is disabled by configuration."
+    );
+}
+
 // ============================================================
 // POSTGRESQL CONFIGURATION
 // ============================================================
@@ -396,6 +413,11 @@ builder.Services
 builder.Services
     .AddHostedService<
         OracleInvoiceOutboxWorker
+    >();
+
+builder.Services
+    .AddHostedService<
+        OracleAttachmentOutboxWorker
     >();
 
 builder.Services

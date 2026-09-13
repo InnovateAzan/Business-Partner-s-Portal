@@ -31,6 +31,25 @@ import type {
 } from "../types";
 
 // ============================================================
+// SAFE IDEMPOTENCY KEY
+// ============================================================
+
+function createIdempotencyKey() {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
+}
+
+// ============================================================
 // UPLOAD ICON
 // ============================================================
 
@@ -59,17 +78,19 @@ function UploadCloudIcon() {
 // UPLOAD DROPZONE
 // ============================================================
 
+type ExistingDocument =
+  NonNullable<PortalInvoice["existingDocuments"]>[number];
+
 type UploadDropZoneProps = {
   title: string;
   hint: string;
-
   files: File[];
-
   onFilesChange: (
     files: File[]
   ) => void;
-
   multiple?: boolean;
+  existingFiles?: ExistingDocument[];
+  onRemoveExisting?: (document: ExistingDocument) => void;
 };
 
 function UploadDropZone({
@@ -78,6 +99,8 @@ function UploadDropZone({
   files,
   onFilesChange,
   multiple = true,
+  existingFiles = [],
+  onRemoveExisting,
 }: UploadDropZoneProps) {
   const [
     dragging,
@@ -248,26 +271,22 @@ function UploadDropZone({
         event
       ) => {
         event.preventDefault();
-
         setDragging(true);
       }}
       onDragOver={(
         event
       ) => {
         event.preventDefault();
-
         setDragging(true);
       }}
       onDragLeave={(
         event
       ) => {
         event.preventDefault();
-
         setDragging(false);
       }}
       onDrop={(event) => {
         event.preventDefault();
-
         setDragging(false);
 
         acceptFiles(
@@ -361,6 +380,30 @@ function UploadDropZone({
           )}
         </div>
       )}
+
+      {existingFiles.length > 0 && (
+        <div className="invoice-upload-selected-list">
+          {existingFiles.map((document) => (
+            <div
+              className="invoice-upload-selected"
+              key={document.id}
+            >
+              <span title={document.originalFileName}>
+                {document.originalFileName}
+              </span>
+
+              {onRemoveExisting && (
+                <button
+                  type="button"
+                  onClick={() => onRemoveExisting(document)}
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -394,7 +437,9 @@ export function SubmitInvoicePage() {
 
   const { id } =
     useParams();
-  const [searchParams] = useSearchParams();
+
+  const [searchParams] =
+    useSearchParams();
 
   const isResubmit =
     Boolean(id);
@@ -407,9 +452,27 @@ export function SubmitInvoicePage() {
       OraclePoGrn[]
     >([]);
 
-  const [receiptLines, setReceiptLines] = useState<OracleReceiptLine[]>([]);
-  const [selectedReceiptTransactionIds, setSelectedReceiptTransactionIds] = useState<number[]>([]);
-  const [receiptLinesLoading, setReceiptLinesLoading] = useState(false);
+  const [
+    receiptLines,
+    setReceiptLines,
+  ] =
+    useState<
+      OracleReceiptLine[]
+    >([]);
+
+  const [
+    selectedReceiptTransactionIds,
+    setSelectedReceiptTransactionIds,
+  ] =
+    useState<number[]>(
+      []
+    );
+
+  const [
+    receiptLinesLoading,
+    setReceiptLinesLoading,
+  ] =
+    useState(false);
 
   // ============================================================
   // MULTI PO
@@ -440,7 +503,10 @@ export function SubmitInvoicePage() {
       HTMLDivElement | null
     >(null);
 
-  const submissionIdempotencyKey = useRef<string>(crypto.randomUUID());
+  const submissionIdempotencyKey =
+    useRef<string>(
+      createIdempotencyKey()
+    );
 
   // ============================================================
   // GRN / INVOICE
@@ -477,8 +543,20 @@ export function SubmitInvoicePage() {
     setDescription,
   ] =
     useState("");
-  const [resubmitStatus, setResubmitStatus] = useState("");
-  const [lastSuccessfulStep, setLastSuccessfulStep] = useState("Submitted");
+
+  const [
+    resubmitStatus,
+    setResubmitStatus,
+  ] =
+    useState("");
+
+  const [
+    lastSuccessfulStep,
+    setLastSuccessfulStep,
+  ] =
+    useState(
+      "Submitted"
+    );
 
   const [
     invoiceType,
@@ -506,6 +584,18 @@ export function SubmitInvoicePage() {
     );
 
   const [
+    existingDocuments,
+    setExistingDocuments,
+  ] = useState<
+    NonNullable<PortalInvoice["existingDocuments"]>
+  >([]);
+
+  const [
+    removedExistingDocumentIds,
+    setRemovedExistingDocumentIds,
+  ] = useState<string[]>([]);
+
+  const [
     error,
     setError,
   ] =
@@ -516,6 +606,79 @@ export function SubmitInvoicePage() {
     setBusy,
   ] =
     useState(false);
+
+  // ============================================================
+  // AUTO CALCULATE INVOICE AMOUNT
+  // ============================================================
+
+  const calculatedInvoiceAmount =
+    useMemo(
+      () =>
+        receiptLines
+          .filter(
+            (
+              line
+            ) =>
+              selectedReceiptTransactionIds.includes(
+                line.rcvTransactionId
+              )
+          )
+          .reduce(
+            (
+              total,
+              line
+            ) =>
+              total +
+              (
+                Number(
+                  line.availableQuantity ||
+                    0
+                ) *
+                Number(
+                  line.unitPrice ||
+                    0
+                )
+              ),
+            0
+          ),
+      [
+        receiptLines,
+        selectedReceiptTransactionIds,
+      ]
+    );
+
+  useEffect(
+    () => {
+      if (
+        selectedReceiptTransactionIds.length ===
+        0
+      ) {
+        /*
+         * For normal/new invoice, no selected receipt line means
+         * no invoice amount.
+         *
+         * For resubmit, keep the previously loaded amount until
+         * receipt lines have actually been selected/loaded.
+         */
+        if (!isResubmit) {
+          setInvoiceAmount("");
+        }
+
+        return;
+      }
+
+      setInvoiceAmount(
+        calculatedInvoiceAmount.toFixed(
+          2
+        )
+      );
+    },
+    [
+      calculatedInvoiceAmount,
+      selectedReceiptTransactionIds.length,
+      isResubmit,
+    ]
+  );
 
   // ============================================================
   // LOAD
@@ -543,10 +706,42 @@ export function SubmitInvoicePage() {
       )
       .then(
         ({ data }) => {
-          const currentStatus = (data.status || "").toUpperCase();
-          const currentIntegration = (data.integrationStatus || "").toUpperCase();
-          setResubmitStatus(currentStatus === "RETURNED" ? "Returned for Correction" : "Action Required");
-          setLastSuccessfulStep(currentStatus === "SENT_TO_ORACLE" || currentIntegration === "SUCCESS" ? "Sent to Oracle" : ["INTEGRATION_FAILED", "FAILED", "ORACLE_REJECTED"].includes(currentStatus) ? "Not Sent to Oracle" : "Submitted");
+          const currentStatus =
+            (
+              data.status ||
+              ""
+            ).toUpperCase();
+
+          const currentIntegration =
+            (
+              data.integrationStatus ||
+              ""
+            ).toUpperCase();
+
+          setResubmitStatus(
+            currentStatus ===
+              "RETURNED"
+              ? "Returned for Correction"
+              : "Action Required"
+          );
+
+          setLastSuccessfulStep(
+            currentStatus ===
+              "SENT_TO_ORACLE" ||
+            currentIntegration ===
+              "SUCCESS"
+              ? "Sent to Oracle"
+              : [
+                  "INTEGRATION_FAILED",
+                  "FAILED",
+                  "ORACLE_REJECTED",
+                ].includes(
+                  currentStatus
+                )
+                ? "Not Sent to Oracle"
+                : "Submitted"
+          );
+
           const currentPoNumbers =
             data.poNumbers &&
             data.poNumbers.length
@@ -560,7 +755,9 @@ export function SubmitInvoicePage() {
                     (x) =>
                       x.trim()
                   )
-                  .filter(Boolean);
+                  .filter(
+                    Boolean
+                  );
 
           setSelectedPoNumbers(
             currentPoNumbers
@@ -568,6 +765,16 @@ export function SubmitInvoicePage() {
 
           setSelected(
             data.grnNumbers ||
+              []
+          );
+
+          setSelectedReceiptTransactionIds(
+            data.rcvTransactionIds ||
+              []
+          );
+
+          setExistingDocuments(
+            data.existingDocuments ||
               []
           );
 
@@ -612,6 +819,62 @@ export function SubmitInvoicePage() {
           )
       );
   }, [id]);
+
+  useEffect(() => {
+    if (
+      id ||
+      !searchParams.get(
+        "prefill"
+      ) ||
+      rows.length === 0
+    ) {
+      return;
+    }
+
+    const poNumber =
+      searchParams.get(
+        "po"
+      );
+
+    const grnNumbers =
+      searchParams.getAll(
+        "grn"
+      );
+
+    if (
+      !poNumber ||
+      !rows.some(
+        (
+          row
+        ) =>
+          row.poNumber ===
+          poNumber
+      )
+    ) {
+      return;
+    }
+
+    setSelectedPoNumbers(
+      [
+        poNumber,
+      ]
+    );
+
+    setSelected(
+      grnNumbers
+    );
+
+    /*
+     * Do not calculate Invoice Amount here anymore.
+     *
+     * The exact amount will be calculated from the actual
+     * selected Oracle receipt lines after they are loaded.
+     */
+  }, [
+    id,
+    rows,
+    searchParams,
+  ]);
 
   // ============================================================
   // CLOSE PO DROPDOWN OUTSIDE
@@ -658,8 +921,27 @@ export function SubmitInvoicePage() {
         [
           ...new Set(
             rows
+              .filter(
+                (
+                  row
+                ) =>
+                  Boolean(
+                    row.grnNumber
+                  )
+                  &&
+                  !pendingQc(
+                    row.inspectionStatus
+                  )
+                  &&
+                  Number(
+                    row.quantityAvailableToInvoice ??
+                    0
+                  ) > 0
+              )
               .map(
-                (row) =>
+                (
+                  row
+                ) =>
                   row.poNumber
               )
               .filter(
@@ -680,42 +962,52 @@ export function SubmitInvoicePage() {
               b,
               undefined,
               {
-                numeric: true,
+                numeric:
+                  true,
               }
             )
         ),
-      [rows]
+      [
+        rows,
+      ]
     );
 
   const filteredPurchaseOrders =
-    useMemo(() => {
-      const query =
-        poSearch
-          .trim()
-          .toLowerCase();
+    useMemo(
+      () => {
+        const query =
+          poSearch
+            .trim()
+            .toLowerCase();
 
-      if (!query) {
-        return purchaseOrders;
-      }
+        if (!query) {
+          return purchaseOrders;
+        }
 
-      return purchaseOrders.filter(
-        (number) =>
-          number
-            .toLowerCase()
-            .includes(
-              query
-            )
-      );
-    }, [
-      purchaseOrders,
-      poSearch,
-    ]);
+        return purchaseOrders.filter(
+          (
+            number
+          ) =>
+            number
+              .toLowerCase()
+              .includes(
+                query
+              )
+        );
+      },
+      [
+        purchaseOrders,
+        poSearch,
+      ]
+    );
 
   function togglePo(
     number: string
   ) {
     setSelectedPoNumbers(
-      (current) => {
+      (
+        current
+      ) => {
         const exists =
           current.includes(
             number
@@ -724,7 +1016,9 @@ export function SubmitInvoicePage() {
         const next =
           exists
             ? current.filter(
-                (value) =>
+                (
+                  value
+                ) =>
                   value !==
                   number
               )
@@ -733,32 +1027,68 @@ export function SubmitInvoicePage() {
                 number,
               ];
 
-        /*
-         * If a PO is removed,
-         * remove its GRNs as well.
-         */
         if (exists) {
           const grnsForRemovedPo =
             new Set(
               rows
                 .filter(
-                  (row) =>
+                  (
+                    row
+                  ) =>
                     row.poNumber ===
                       number &&
                     row.grnNumber
                 )
                 .map(
-                  (row) =>
+                  (
+                    row
+                  ) =>
                     row.grnNumber!
                 )
             );
 
           setSelected(
-            (currentGrns) =>
+            (
+              currentGrns
+            ) =>
               currentGrns.filter(
-                (grn) =>
+                (
+                  grn
+                ) =>
                   !grnsForRemovedPo.has(
                     grn
+                  )
+              )
+          );
+
+          const transactionIdsForRemovedPo =
+            new Set(
+              receiptLines
+                .filter(
+                  (
+                    line
+                  ) =>
+                    line.poNumber ===
+                    number
+                )
+                .map(
+                  (
+                    line
+                  ) =>
+                    line.rcvTransactionId
+                )
+            );
+
+          setSelectedReceiptTransactionIds(
+            (
+              currentIds
+            ) =>
+              currentIds.filter(
+                (
+                  transactionId
+                ) =>
+                  !transactionIdsForRemovedPo.has(
+                    transactionId
                   )
               )
           );
@@ -776,61 +1106,319 @@ export function SubmitInvoicePage() {
       new Set(
         rows
           .filter(
-            (row) =>
+            (
+              row
+            ) =>
               row.poNumber ===
                 number &&
               row.grnNumber
           )
           .map(
-            (row) =>
+            (
+              row
+            ) =>
               row.grnNumber!
           )
       );
 
+    const transactionIdsForRemovedPo =
+      new Set(
+        receiptLines
+          .filter(
+            (
+              line
+            ) =>
+              line.poNumber ===
+              number
+          )
+          .map(
+            (
+              line
+            ) =>
+              line.rcvTransactionId
+          )
+      );
+
     setSelectedPoNumbers(
-      (current) =>
+      (
+        current
+      ) =>
         current.filter(
-          (value) =>
-            value !== number
+          (
+            value
+          ) =>
+            value !==
+            number
         )
     );
 
     setSelected(
-      (current) =>
+      (
+        current
+      ) =>
         current.filter(
-          (grn) =>
+          (
+            grn
+          ) =>
             !grnsForRemovedPo.has(
               grn
             )
         )
     );
+
+    setSelectedReceiptTransactionIds(
+      (
+        current
+      ) =>
+        current.filter(
+          (
+            transactionId
+          ) =>
+            !transactionIdsForRemovedPo.has(
+              transactionId
+            )
+        )
+    );
   }
 
-  useEffect(() => {
-    let cancelled = false;
-    async function loadReceiptLines() {
-      if (selectedPoNumbers.length === 0) { setReceiptLines([]); setSelectedReceiptTransactionIds([]); return; }
-      setReceiptLinesLoading(true);
-      try {
-        const groups = await Promise.all(selectedPoNumbers.map(async po => {
-          const grns = [...new Set(rows.filter(r => r.poNumber === po && r.grnNumber && !pendingQc(r.inspectionStatus)).map(r => r.grnNumber!))];
-          return getMyReceiptLines(po, grns);
-        }));
-        if (!cancelled) setReceiptLines(groups.flat().filter(x => Number(x.availableQuantity) > 0));
-      } catch (err) { if (!cancelled) setError(getApiErrorMessage(err)); }
-      finally { if (!cancelled) setReceiptLinesLoading(false); }
-    }
-    loadReceiptLines();
-    return () => { cancelled = true; };
-  }, [rows, selectedPoNumbers]);
+  // ============================================================
+  // LOAD RECEIPT LINES
+  // ============================================================
 
-  function toggleReceiptLine(line: OracleReceiptLine) {
-    setSelectedReceiptTransactionIds(current => {
-      const next = current.includes(line.rcvTransactionId) ? current.filter(x => x !== line.rcvTransactionId) : [...current, line.rcvTransactionId];
-      const grns = [...new Set(receiptLines.filter(x => next.includes(x.rcvTransactionId)).map(x => x.grnNumber))];
-      setSelected(grns);
-      return next;
-    });
+  useEffect(() => {
+    let cancelled =
+      false;
+
+    async function loadReceiptLines() {
+      if (
+        selectedPoNumbers.length ===
+        0
+      ) {
+        setReceiptLines(
+          []
+        );
+
+        setSelectedReceiptTransactionIds(
+          []
+        );
+
+        return;
+      }
+
+      setReceiptLinesLoading(
+        true
+      );
+
+      try {
+        const groups =
+          await Promise.all(
+            selectedPoNumbers.map(
+              async (
+                po
+              ) => {
+                const grns = [
+                  ...new Set(
+                    rows
+                      .filter(
+                        (
+                          r
+                        ) =>
+                          r.poNumber ===
+                            po &&
+                          r.grnNumber &&
+                          !pendingQc(
+                            r.inspectionStatus
+                          )
+                      )
+                      .map(
+                        (
+                          r
+                        ) =>
+                          r.grnNumber!
+                      )
+                  ),
+                ];
+
+                return getMyReceiptLines(
+                  po,
+                  grns
+                );
+              }
+            )
+          );
+
+        if (
+          !cancelled
+        ) {
+          const loadedLines =
+            groups
+              .flat()
+              .filter(
+                (
+                  x
+                ) =>
+                  Number(
+                    x.availableQuantity
+                  ) > 0
+              );
+
+          setReceiptLines(
+            loadedLines
+          );
+
+          if (
+            searchParams.get(
+              "prefill"
+            )
+          ) {
+            setSelectedReceiptTransactionIds(
+              loadedLines.map(
+                (
+                  line
+                ) =>
+                  line.rcvTransactionId
+              )
+            );
+
+            const grns =
+              [
+                ...new Set(
+                  loadedLines.map(
+                    (
+                      line
+                    ) =>
+                      line.grnNumber
+                  )
+                ),
+              ];
+
+            setSelected(
+              grns
+            );
+          } else if (
+            isResubmit
+          ) {
+            /*
+             * During resubmit, retain only transaction IDs that
+             * still exist in the freshly loaded Oracle receipt lines.
+             */
+            setSelectedReceiptTransactionIds(
+              (
+                current
+              ) => {
+                const availableIds =
+                  new Set(
+                    loadedLines.map(
+                      (
+                        line
+                      ) =>
+                        line.rcvTransactionId
+                    )
+                  );
+
+                return current.filter(
+                  (
+                    id
+                  ) =>
+                    availableIds.has(
+                      id
+                    )
+                );
+              }
+            );
+          }
+        }
+      } catch (
+        err
+      ) {
+        if (
+          !cancelled
+        ) {
+          setError(
+            getApiErrorMessage(
+              err
+            )
+          );
+        }
+      } finally {
+        if (
+          !cancelled
+        ) {
+          setReceiptLinesLoading(
+            false
+          );
+        }
+      }
+    }
+
+    loadReceiptLines();
+
+    return () => {
+      cancelled =
+        true;
+    };
+  }, [
+    rows,
+    selectedPoNumbers,
+    searchParams,
+    isResubmit,
+  ]);
+
+  // ============================================================
+  // TOGGLE RECEIPT LINE
+  // ============================================================
+
+  function toggleReceiptLine(
+    line:
+      OracleReceiptLine
+  ) {
+    setSelectedReceiptTransactionIds(
+      (
+        current
+      ) => {
+        const next =
+          current.includes(
+            line.rcvTransactionId
+          )
+            ? current.filter(
+                (
+                  x
+                ) =>
+                  x !==
+                  line.rcvTransactionId
+              )
+            : [
+                ...current,
+                line.rcvTransactionId,
+              ];
+
+        const grns = [
+          ...new Set(
+            receiptLines
+              .filter(
+                (
+                  x
+                ) =>
+                  next.includes(
+                    x.rcvTransactionId
+                  )
+              )
+              .map(
+                (
+                  x
+                ) =>
+                  x.grnNumber
+              )
+          ),
+        ];
+
+        setSelected(
+          grns
+        );
+
+        return next;
+      }
+    );
   }
 
   // ============================================================
@@ -838,50 +1426,59 @@ export function SubmitInvoicePage() {
   // ============================================================
 
   const availableGrns =
-    useMemo(() => {
-      if (
-        selectedPoNumbers.length ===
-        0
-      ) {
-        return [];
-      }
+    useMemo(
+      () => {
+        if (
+          selectedPoNumbers.length ===
+          0
+        ) {
+          return [];
+        }
 
-      return rows.filter(
-        (row) => {
-          const availableQuantity =
-            Number(
-              row.quantityAvailableToInvoice ??
-                row.grnReceivedQuantity ??
+        return rows.filter(
+          (
+            row
+          ) => {
+            const availableQuantity =
+              Number(
+                row.quantityAvailableToInvoice ??
+                  row.grnReceivedQuantity ??
+                  0
+              );
+
+            return (
+              selectedPoNumbers.includes(
+                row.poNumber
+              ) &&
+              Boolean(
+                row.grnNumber
+              ) &&
+              availableQuantity >
                 0
             );
-
-          return (
-            selectedPoNumbers.includes(
-              row.poNumber
-            ) &&
-            Boolean(
-              row.grnNumber
-            ) &&
-            availableQuantity >
-              0
-          );
-        }
-      );
-    }, [
-      rows,
-      selectedPoNumbers,
-    ]);
+          }
+        );
+      },
+      [
+        rows,
+        selectedPoNumbers,
+      ]
+    );
 
   function toggleGrn(
     grnNumber: string
   ) {
     setSelected(
-      (current) =>
+      (
+        current
+      ) =>
         current.includes(
           grnNumber
         )
           ? current.filter(
-              (value) =>
+              (
+                value
+              ) =>
                 value !==
                 grnNumber
             )
@@ -889,6 +1486,24 @@ export function SubmitInvoicePage() {
               ...current,
               grnNumber,
             ]
+    );
+  }
+
+  // Keep these referenced to avoid noUnusedLocals errors
+  void availableGrns;
+  void toggleGrn;
+
+  function removeExistingDocument(
+    document: ExistingDocument
+  ) {
+    setExistingDocuments((current) =>
+      current.filter((x) => x.id !== document.id)
+    );
+
+    setRemovedExistingDocumentIds((current) =>
+      current.includes(document.id)
+        ? current
+        : [...current, document.id]
     );
   }
 
@@ -919,6 +1534,18 @@ export function SubmitInvoicePage() {
     ) {
       setError(
         "Select at least one Purchase Order."
+      );
+
+      return;
+    }
+
+    if (
+      !draft &&
+      selectedReceiptTransactionIds.length ===
+        0
+    ) {
+      setError(
+        "Select at least one available GRN receipt line."
       );
 
       return;
@@ -1010,14 +1637,18 @@ export function SubmitInvoicePage() {
       return;
     }
 
-    setBusy(true);
+    setBusy(
+      true
+    );
 
     try {
       const formData =
         new FormData();
 
       selectedPoNumbers.forEach(
-        (poNumber) => {
+        (
+          poNumber
+        ) => {
           formData.append(
             "poNumbers",
             poNumber
@@ -1025,9 +1656,6 @@ export function SubmitInvoicePage() {
         }
       );
 
-      /*
-       * Backward compatibility.
-       */
       formData.append(
         "poNumber",
         selectedPoNumbers.join(
@@ -1036,7 +1664,9 @@ export function SubmitInvoicePage() {
       );
 
       selected.forEach(
-        (grnNumber) => {
+        (
+          grnNumber
+        ) => {
           formData.append(
             "grnNumbers",
             grnNumber
@@ -1044,8 +1674,24 @@ export function SubmitInvoicePage() {
         }
       );
 
-      selectedReceiptTransactionIds.forEach((transactionId) => {
-        formData.append("rcvTransactionIds", String(transactionId));
+      selectedReceiptTransactionIds.forEach(
+        (
+          transactionId
+        ) => {
+          formData.append(
+            "rcvTransactionIds",
+            String(
+              transactionId
+            )
+          );
+        }
+      );
+
+      removedExistingDocumentIds.forEach((documentId) => {
+        formData.append(
+          "removeDocumentIds",
+          documentId
+        );
       });
 
       formData.append(
@@ -1073,9 +1719,6 @@ export function SubmitInvoicePage() {
         description.trim()
       );
 
-      /*
-       * Invoice Copy = ONE file.
-       */
       if (
         invoiceFiles[0]
       ) {
@@ -1085,11 +1728,10 @@ export function SubmitInvoicePage() {
         );
       }
 
-      /*
-       * Delivery Challan = MULTIPLE files.
-       */
       dcFiles.forEach(
-        (file) => {
+        (
+          file
+        ) => {
           formData.append(
             "deliveryChallanFiles",
             file
@@ -1122,14 +1764,18 @@ export function SubmitInvoicePage() {
       navigate(
         "/invoices"
       );
-    } catch (err) {
+    } catch (
+      err
+    ) {
       setError(
         getApiErrorMessage(
           err
         )
       );
     } finally {
-      setBusy(false);
+      setBusy(
+        false
+      );
     }
   }
 
@@ -1141,6 +1787,23 @@ export function SubmitInvoicePage() {
     <div className="page-card form-page">
       <div className="page-card-head">
         <div>
+          {(isResubmit ||
+            searchParams.get(
+              "prefill"
+            )) && (
+            <button
+              type="button"
+              className="table-btn invoice-back-btn"
+              onClick={() =>
+                navigate(
+                  -1
+                )
+              }
+            >
+              ← Back
+            </button>
+          )}
+
           <h2>
             {isResubmit
               ? "Edit & Resubmit Invoice"
@@ -1169,20 +1832,49 @@ export function SubmitInvoicePage() {
 
       {isResubmit && (
         <div className="success-note">
-          <strong>Reason for Return / Issue</strong>
-          <div>{searchParams.get("issue") || "Invoice was returned by Finance. Please review and resubmit."}</div>
-          <strong>Current Status</strong>
-          <div>{resubmitStatus || "Returned for Correction"}</div>
-          <strong>Last Successful Step</strong>
-          <div>{lastSuccessfulStep}</div>
+          <strong>
+            Reason for Return / Issue
+          </strong>
+
+          <div>
+            {searchParams.get("issue") ||
+              "Invoice was returned by Finance. Please review and resubmit."}
+          </div>
+
+          {searchParams.get("oracleRequestId") && (
+            <>
+              <strong>Oracle Request ID</strong>
+              <div>{searchParams.get("oracleRequestId")}</div>
+            </>
+          )}
+
+          {searchParams.get("integrationStatus") && (
+            <>
+              <strong>Integration Status</strong>
+              <div>{searchParams.get("integrationStatus")}</div>
+            </>
+          )}
+
+          <strong>
+            Current Status
+          </strong>
+
+          <div>
+            {resubmitStatus ||
+              "Returned for Correction"}
+          </div>
+
+          <strong>
+            Last Successful Step
+          </strong>
+
+          <div>
+            {lastSuccessfulStep}
+          </div>
         </div>
       )}
 
       <div className="form-grid">
-        {/* ====================================================
-            MULTI SELECT PURCHASE ORDER
-        ==================================================== */}
-
         <label>
           Purchase Order
 
@@ -1202,14 +1894,18 @@ export function SubmitInvoicePage() {
             >
               <div className="po-selected-chips">
                 {selectedPoNumbers.map(
-                  (number) => (
+                  (
+                    number
+                  ) => (
                     <span
                       key={
                         number
                       }
                       className="po-selected-chip"
                     >
-                      {number}
+                      {
+                        number
+                      }
 
                       <button
                         type="button"
@@ -1268,7 +1964,9 @@ export function SubmitInvoicePage() {
                   event.stopPropagation();
 
                   setPoDropdownOpen(
-                    (current) =>
+                    (
+                      current
+                    ) =>
                       !current
                   );
                 }}
@@ -1320,7 +2018,9 @@ export function SubmitInvoicePage() {
                           </span>
 
                           <span>
-                            {number}
+                            {
+                              number
+                            }
                           </span>
                         </button>
                       );
@@ -1328,8 +2028,7 @@ export function SubmitInvoicePage() {
                   )
                 ) : (
                   <div className="po-search-empty">
-                    No Purchase Orders
-                    found.
+                    No Purchase Orders found.
                   </div>
                 )}
               </div>
@@ -1391,6 +2090,19 @@ export function SubmitInvoicePage() {
             value={
               invoiceDate
             }
+            onClick={(
+              event
+            ) => {
+              const input =
+                event.currentTarget;
+
+              if (
+                typeof input.showPicker ===
+                "function"
+              ) {
+                input.showPicker();
+              }
+            }}
             onChange={(
               event
             ) =>
@@ -1421,6 +2133,21 @@ export function SubmitInvoicePage() {
               )
             }
           />
+
+          <small
+            style={{
+              display:
+                "block",
+              marginTop:
+                "5px",
+              color:
+                "#667085",
+              fontSize:
+                "12px",
+            }}
+          >
+            Auto-calculated from selected GRN lines. You may adjust it if required.
+          </small>
         </label>
 
         <label>
@@ -1452,25 +2179,98 @@ export function SubmitInvoicePage() {
       </h3>
 
       <div className="grn-select-list receipt-line-list">
-        {receiptLinesLoading && <div className="empty-state">Loading GRN lines...</div>}
-        {!receiptLinesLoading && receiptLines.map((line) => (
-          <label key={line.rcvTransactionId} className="grn-choice receipt-line-choice">
-            <input
-              type="checkbox"
-              checked={selectedReceiptTransactionIds.includes(line.rcvTransactionId)}
-              onChange={() => toggleReceiptLine(line)}
-            />
-            <div>
-              <b>GRN {line.grnNumber} · Line {line.poLineNumber}</b>
-              <span>PO: {line.poNumber} · Received: {Number(line.receivedQuantity).toLocaleString()} · Available: {Number(line.availableQuantity).toLocaleString()} · Unit Price: {Number(line.unitPrice).toLocaleString()}</span>
-              <small>RCV Transaction: {line.rcvTransactionId}</small>
-            </div>
-            <span className="status green">Available</span>
-          </label>
-        ))}
-        {!receiptLinesLoading && selectedPoNumbers.length > 0 && receiptLines.length === 0 && (
-          <div className="empty-state">No eligible GRN receipt lines are available for the selected POs.</div>
+        {receiptLinesLoading && (
+          <div className="empty-state">
+            Loading GRN lines...
+          </div>
         )}
+
+        {!receiptLinesLoading &&
+          receiptLines.map(
+            (
+              line
+            ) => (
+              <label
+                key={
+                  line.rcvTransactionId
+                }
+                className="grn-choice receipt-line-choice"
+              >
+                <input
+                  type="checkbox"
+                  checked={
+                    selectedReceiptTransactionIds.includes(
+                      line.rcvTransactionId
+                    )
+                  }
+                  onChange={() =>
+                    toggleReceiptLine(
+                      line
+                    )
+                  }
+                />
+
+                <div>
+                  <b>
+                    GRN{" "}
+                    {
+                      line.grnNumber
+                    }{" "}
+                    · Line{" "}
+                    {
+                      line.poLineNumber
+                    }
+                  </b>
+
+                  <strong>
+                    {line.itemDescription ||
+                      "Item description unavailable"}
+                  </strong>
+
+                  <span>
+                    PO:{" "}
+                    {
+                      line.poNumber
+                    }{" "}
+                    · Received:{" "}
+                    {Number(
+                      line.receivedQuantity
+                    ).toLocaleString()}{" "}
+                    · Available:{" "}
+                    {Number(
+                      line.availableQuantity
+                    ).toLocaleString()}{" "}
+                    · Unit Price:{" "}
+                    {Number(
+                      line.unitPrice
+                    ).toLocaleString()}
+                  </span>
+
+                  <small>
+                    Amount: PKR{" "}
+                    {Number(
+                      line.availableQuantity *
+                        line.unitPrice
+                    ).toLocaleString()}
+                  </small>
+                </div>
+
+                <span className="status green">
+                  Available
+                </span>
+              </label>
+            )
+          )}
+
+        {!receiptLinesLoading &&
+          selectedPoNumbers.length >
+            0 &&
+          receiptLines.length ===
+            0 && (
+            <div className="empty-state">
+              No eligible GRN receipt lines are available for the selected POs.
+            </div>
+          )}
       </div>
 
       <div className="upload-grid invoice-upload-grid">
@@ -1490,6 +2290,15 @@ export function SubmitInvoicePage() {
           multiple={
             false
           }
+          existingFiles={
+            isResubmit
+              ? existingDocuments.filter(
+                  (document) =>
+                    document.documentType.toUpperCase() === "INVOICE"
+                )
+              : []
+          }
+          onRemoveExisting={removeExistingDocument}
         />
 
         <UploadDropZone
@@ -1508,6 +2317,15 @@ export function SubmitInvoicePage() {
             setDcFiles
           }
           multiple
+          existingFiles={
+            isResubmit
+              ? existingDocuments.filter(
+                  (document) =>
+                    document.documentType.toUpperCase() === "DELIVERY_CHALLAN"
+                )
+              : []
+          }
+          onRemoveExisting={removeExistingDocument}
         />
       </div>
 
@@ -1520,7 +2338,9 @@ export function SubmitInvoicePage() {
               busy
             }
             onClick={() =>
-              save(true)
+              save(
+                true
+              )
             }
           >
             Save Draft
@@ -1534,7 +2354,9 @@ export function SubmitInvoicePage() {
             busy
           }
           onClick={() =>
-            save(false)
+            save(
+              false
+            )
           }
         >
           {busy

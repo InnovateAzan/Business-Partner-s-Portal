@@ -2,7 +2,16 @@ export type UserType = "ADMIN" | "INTERNAL" | "VENDOR";
 export interface SessionUser { id:string; fullName:string; email:string; userType:UserType; roles:string[]; permissions:string[]; vendorId?:string|null; }
 export interface LoginResponse { accessToken:string; expiresAt:string; user:SessionUser; }
 export interface OracleSupplier { vendorId:string; supplierNumber:string; vendorName:string; vendorSiteId?:string|null; vendorSiteCode?:string|null; orgId?:string|null; operatingUnit?:string|null; email?:string|null; phone?:string|null; taxNumber?:string|null; }
-export interface OraclePoGrn { poHeaderId?:string|null; poNumber:string; poType?:string|null; poStatus?:string|null; inspectionStatus?:string|null; vendorId:string; vendorName?:string|null; vendorSiteCode?:string|null; poLineId?:string|null; poLineNum?:string|null; itemCode?:string|null; itemDescription?:string|null; uom?:string|null; poQuantity?:number|null; unitPrice?:number|null; poLineAmount?:number|null; orderedQuantity?:number|null; receivedQuantity?:number|null; billedQuantity?:number|null; cancelledQuantity?:number|null; quantityAvailableToInvoice?:number|null; grnNumber?:string|null; grnReceivedQuantity?:number|null; receiptDate?:string|null; currencyCode?:string|null; poCreationDate?:string|null; poApprovedDate?:string|null; }
+export interface OraclePoGrn { poHeaderId?:string|null; poNumber:string; poType?:string|null; poStatus?:string|null; inspectionStatus?:string|null; vendorId:string; vendorName?:string|null; vendorSiteCode?:string|null; poLineId?:string|null; poLineNum?:string|null; itemCode?:string|null; itemDescription?:string|null; uom?:string|null; poQuantity?:number|null; unitPrice?:number|null; poLineAmount?:number|null; orderedQuantity?:number|null; receivedQuantity?:number|null; billedQuantity?:number|null; cancelledQuantity?:number|null; quantityAvailableToInvoice?:number|null; grnNumber?:string|null; rcvTransactionId?:string|null; shipmentLineId?:string|null; itemId?:string|null; grnReceivedQuantity?:number|null; receiptDate?:string|null; currencyCode?:string|null; poCreationDate?:string|null; poApprovedDate?:string|null; }
 export interface OracleInvoice { vendorId:string; supplierNumber?:string|null; vendorName?:string|null; invoiceNumber:string; invoiceDate?:string|null; invoiceAmount:number; amountPaid?:number|null; outstandingAmount?:number|null; paymentStatusFlag?:string|null; paymentStatus?:string|null; approvalStatus?:string|null; poNumber?:string|null; poNumbers?:string[]; grnNumber?:string|null; receiptDate?:string|null; }
-export interface PortalInvoice { id:string; invoiceNumber:string; invoiceDate?:string|null; invoiceAmount:number; status:string; integrationStatus:string; submissionDate?:string|null; updatedAt:string; poNumber?:string|null; poNumbers?:string[]; grnNumbers?:string[]; invoiceType?:string|null; description?:string|null; }
+export interface PortalInvoice { id:string; invoiceNumber:string; invoiceDate?:string|null; invoiceAmount:number; status:string; integrationStatus:string; submissionDate?:string|null; updatedAt:string; poNumber?:string|null; poNumbers?:string[]; grnNumbers?:string[]; rcvTransactionIds?:number[]; existingDocuments?:{id:string;documentType:string;originalFileName:string;contentType:string;fileSize:number}[]; invoiceType?:string|null; description?:string|null; }
+
+export interface InvoiceIssue {
+  invoiceId:string;
+  status:string;
+  integrationStatus:string;
+  reason?:string|null;
+  oracleRequestId?:number|null;
+  attemptCount?:number|null;
+}
 export interface NotificationItem { id:string; title:string; message:string; isRead:boolean; createdAt:string; actionUrl?:string|null; }

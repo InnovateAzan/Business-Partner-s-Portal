@@ -136,7 +136,7 @@ public sealed class OracleService(
     }
 
     // ============================================================
-    // GET SUPPLIERS
+    // GET ALL SUPPLIERS
     // ============================================================
 
     public async Task<List<OracleSupplierDto>>
@@ -152,13 +152,8 @@ public sealed class OracleService(
         command.CommandText =
             """
             SELECT *
-            FROM
-            (
-                SELECT *
-                FROM APPS.PORTAL_SUPPLIERS_V
-                ORDER BY VENDOR_NAME
-            )
-            WHERE ROWNUM <= 1000
+            FROM APPS.PORTAL_SUPPLIERS_V
+            ORDER BY VENDOR_NAME
             """;
 
         var rows =
@@ -167,6 +162,55 @@ public sealed class OracleService(
         return rows
             .Select(MapSupplier)
             .ToList();
+    }
+
+    // ============================================================
+    // GET TOTAL ORACLE VENDOR COUNT
+    // ============================================================
+
+    public async Task<int> GetOracleVendorCountAsync(
+        CancellationToken ct)
+    {
+        await using var connection =
+            await Open(ct);
+
+        await using var command =
+            connection.CreateCommand();
+
+        command.CommandText =
+            """
+            SELECT COUNT(DISTINCT VENDOR_ID)
+            FROM APPS.PORTAL_SUPPLIERS_V
+            WHERE VENDOR_ID IS NOT NULL
+            """;
+
+        try
+        {
+            var result =
+                await command.ExecuteScalarAsync(ct);
+
+            if (
+                result is null ||
+                result == DBNull.Value
+            )
+            {
+                return 0;
+            }
+
+            return Convert.ToInt32(
+                result
+            );
+        }
+        catch (OracleException ex)
+        {
+            logger.LogError(
+                ex,
+                "Failed to get total Oracle vendor count. OracleError={OracleErrorNumber}",
+                ex.Number
+            );
+
+            throw;
+        }
     }
 
     // ============================================================
@@ -206,58 +250,53 @@ public sealed class OracleService(
         command.CommandText =
             """
             SELECT *
-            FROM
-            (
-                SELECT *
-                FROM APPS.PORTAL_SUPPLIERS_V
-                WHERE
-                    UPPER(
-                        NVL(
-                            VENDOR_NAME,
-                            ''
-                        )
-                    ) LIKE :pattern
+            FROM APPS.PORTAL_SUPPLIERS_V
+            WHERE
+                UPPER(
+                    NVL(
+                        VENDOR_NAME,
+                        ''
+                    )
+                ) LIKE :pattern
 
-                    OR UPPER(
-                        TRIM(
-                            CAST(
-                                VENDOR_ID AS VARCHAR2(100)
-                            )
+                OR UPPER(
+                    TRIM(
+                        CAST(
+                            VENDOR_ID AS VARCHAR2(100)
                         )
-                    ) LIKE :pattern
+                    )
+                ) LIKE :pattern
 
-                    OR UPPER(
-                        TRIM(
-                            CAST(
-                                SUPPLIER_NUMBER AS VARCHAR2(100)
-                            )
+                OR UPPER(
+                    TRIM(
+                        CAST(
+                            SUPPLIER_NUMBER AS VARCHAR2(100)
                         )
-                    ) LIKE :pattern
+                    )
+                ) LIKE :pattern
 
-                    OR UPPER(
-                        NVL(
-                            CONTACT_PERSON,
-                            ''
-                        )
-                    ) LIKE :pattern
+                OR UPPER(
+                    NVL(
+                        CONTACT_PERSON,
+                        ''
+                    )
+                ) LIKE :pattern
 
-                    OR UPPER(
-                        NVL(
-                            CONTACT_EMAIL,
-                            ''
-                        )
-                    ) LIKE :pattern
+                OR UPPER(
+                    NVL(
+                        CONTACT_EMAIL,
+                        ''
+                    )
+                ) LIKE :pattern
 
-                    OR UPPER(
-                        NVL(
-                            CONTACT_PHONE,
-                            ''
-                        )
-                    ) LIKE :pattern
+                OR UPPER(
+                    NVL(
+                        CONTACT_PHONE,
+                        ''
+                    )
+                ) LIKE :pattern
 
-                ORDER BY VENDOR_NAME
-            )
-            WHERE ROWNUM <= 500
+            ORDER BY VENDOR_NAME
             """;
 
         command.Parameters.Add(
@@ -296,6 +335,12 @@ public sealed class OracleService(
             SELECT *
             FROM APPS.PORTAL_PO_GRN_V
             WHERE VENDOR_ID = :vendorId
+
+              AND COALESCE(
+                    RECEIPT_DATE,
+                    PO_CREATION_DATE,
+                    PO_APPROVED_DATE
+                  ) >= :fiscalWindowStart
             """
             +
             (
@@ -324,6 +369,11 @@ public sealed class OracleService(
             OracleDbType.Decimal
         ).Value = vendorId;
 
+        command.Parameters.Add(
+            "fiscalWindowStart",
+            OracleDbType.Date
+        ).Value = PakistanFiscalWindow.Start();
+
         if (
             !string.IsNullOrWhiteSpace(
                 poNumber
@@ -340,9 +390,332 @@ public sealed class OracleService(
         var rows =
             await Read(command, ct);
 
-        return rows
-            .Select(MapPoGrn)
+        var mappedRows =
+            rows
+                .Select(MapPoGrn)
+                .ToList();
+
+        /*
+         * IMPORTANT:
+         *
+         * Oracle view APPS.PORTAL_PO_GRN_V can return more than
+         * one transaction record for the same logical GRN line.
+         *
+         * Example:
+         *
+         * Same:
+         *   PO
+         *   GRN
+         *   PO Line
+         *   Shipment Line
+         *   Item
+         *   Qty
+         *   Unit Price
+         *
+         * But different RCV_TRANSACTION_ID.
+         *
+         * If we deduplicate only on RCV_TRANSACTION_ID, the same
+         * GRN line appears multiple times and:
+         *
+         *   Received Qty is duplicated
+         *   Available Qty is duplicated
+         *   GRN Amount is duplicated
+         *   Available To Invoice is duplicated
+         *
+         * For portal display/calculation the correct logical grain
+         * is primarily:
+         *
+         *   GRN_NUMBER + SHIPMENT_LINE_ID
+         *
+         * RCV_TRANSACTION_ID is still preserved in the selected
+         * DTO row for Oracle AP invoice integration.
+         */
+        return mappedRows
+            .GroupBy(
+                GetPoGrnBusinessLineKey,
+                StringComparer.OrdinalIgnoreCase
+            )
+            .Select(
+                group =>
+                    SelectBestPoGrnRow(
+                        group
+                    )
+            )
+            .OrderByDescending(
+                x => x.PoNumber
+            )
+            .ThenByDescending(
+                x => x.ReceiptDate
+            )
             .ToList();
+    }
+
+    // ============================================================
+    // SELECT BEST ROW FROM DUPLICATE GRN RECORDS
+    // ============================================================
+
+    private static OraclePoGrnDto SelectBestPoGrnRow(
+        IEnumerable<OraclePoGrnDto> rows)
+    {
+        /*
+         * When the same logical GRN line is returned multiple
+         * times by Oracle, prefer the row carrying the greatest
+         * available quantity.
+         *
+         * If quantities are equal, prefer the latest receipt date.
+         *
+         * This keeps one canonical row for the portal.
+         */
+        return rows
+            .OrderByDescending(
+                x =>
+                    x.QuantityAvailableToInvoice
+                    ?? 0
+            )
+            .ThenByDescending(
+                x =>
+                    x.GrnReceivedQuantity
+                    ?? x.ReceivedQuantity
+                    ?? 0
+            )
+            .ThenByDescending(
+                x => x.ReceiptDate
+            )
+            .ThenByDescending(
+                x =>
+                    ParseNumericId(
+                        x.RcvTransactionId
+                    )
+            )
+            .First();
+    }
+
+    // ============================================================
+    // PO / GRN BUSINESS LINE KEY
+    // ============================================================
+
+    private static string GetPoGrnBusinessLineKey(
+        OraclePoGrnDto row)
+    {
+        var poNumber =
+            NormalizeKeyPart(
+                row.PoNumber
+            );
+
+        var grnNumber =
+            NormalizeKeyPart(
+                row.GrnNumber
+            );
+
+        var shipmentLineId =
+            NormalizeKeyPart(
+                row.ShipmentLineId
+            );
+
+        var poLineId =
+            NormalizeKeyPart(
+                row.PoLineId
+            );
+
+        var poLineNum =
+            NormalizeKeyPart(
+                row.PoLineNum
+            );
+
+        var itemId =
+            NormalizeKeyPart(
+                row.ItemId
+            );
+
+        var itemCode =
+            NormalizeKeyPart(
+                row.ItemCode
+            );
+
+        /*
+         * BEST CASE
+         *
+         * SHIPMENT_LINE_ID identifies the physical Oracle
+         * receiving shipment line.
+         *
+         * One GRN can legitimately have multiple lines, therefore
+         * GRN number alone must never be used for deduplication.
+         */
+        if (
+            !string.IsNullOrWhiteSpace(
+                shipmentLineId
+            )
+        )
+        {
+            return string.Join(
+                "|",
+                "PO",
+                poNumber,
+                "GRN",
+                grnNumber,
+                "SHIPMENT_LINE",
+                shipmentLineId
+            );
+        }
+
+        /*
+         * SECOND FALLBACK
+         *
+         * If shipment line is unavailable, use GRN + PO line +
+         * item identity.
+         *
+         * This prevents identical Oracle transaction rows for the
+         * same business line from being counted multiple times.
+         */
+        if (
+            !string.IsNullOrWhiteSpace(
+                poLineId
+            )
+        )
+        {
+            return string.Join(
+                "|",
+                "PO",
+                poNumber,
+                "GRN",
+                grnNumber,
+                "PO_LINE_ID",
+                poLineId,
+                "ITEM",
+                !string.IsNullOrWhiteSpace(itemId)
+                    ? itemId
+                    : itemCode
+            );
+        }
+
+        /*
+         * THIRD FALLBACK
+         *
+         * Some Oracle views may not expose PO_LINE_ID but may expose
+         * the human-readable PO line number.
+         */
+        if (
+            !string.IsNullOrWhiteSpace(
+                poLineNum
+            )
+        )
+        {
+            return string.Join(
+                "|",
+                "PO",
+                poNumber,
+                "GRN",
+                grnNumber,
+                "PO_LINE_NUM",
+                poLineNum,
+                "ITEM",
+                !string.IsNullOrWhiteSpace(itemId)
+                    ? itemId
+                    : itemCode
+            );
+        }
+
+        /*
+         * FINAL FALLBACK
+         *
+         * Only used when Oracle does not provide shipment-line or
+         * PO-line identifiers.
+         *
+         * Keep quantity, price and date in the key to avoid merging
+         * genuinely different GRN receipt lines.
+         */
+        return string.Join(
+            "|",
+            "PO",
+            poNumber,
+            "GRN",
+            grnNumber,
+            "ITEM",
+            !string.IsNullOrWhiteSpace(itemId)
+                ? itemId
+                : itemCode,
+            "QTY",
+            DecimalKey(
+                row.GrnReceivedQuantity
+                ?? row.ReceivedQuantity
+            ),
+            "PRICE",
+            DecimalKey(
+                row.UnitPrice
+            ),
+            "DATE",
+            DateKey(
+                row.ReceiptDate
+            )
+        );
+    }
+
+    // ============================================================
+    // NORMALIZE BUSINESS KEY STRING
+    // ============================================================
+
+    private static string NormalizeKeyPart(
+        string? value)
+    {
+        return string.IsNullOrWhiteSpace(
+            value
+        )
+            ? ""
+            : value
+                .Trim()
+                .ToUpperInvariant();
+    }
+
+    // ============================================================
+    // DECIMAL KEY
+    // ============================================================
+
+    private static string DecimalKey(
+        decimal? value)
+    {
+        return (
+            value
+            ?? 0
+        ).ToString(
+            System.Globalization.CultureInfo.InvariantCulture
+        );
+    }
+
+    // ============================================================
+    // DATE KEY
+    // ============================================================
+
+    private static string DateKey(
+        DateTime? value)
+    {
+        return value.HasValue
+            ? value.Value.ToString(
+                "yyyyMMddHHmmss",
+                System.Globalization.CultureInfo.InvariantCulture
+            )
+            : "";
+    }
+
+    // ============================================================
+    // SAFE NUMERIC ID FOR SORTING
+    // ============================================================
+
+    private static decimal ParseNumericId(
+        string? value)
+    {
+        if (
+            decimal.TryParse(
+                value,
+                System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var parsed
+            )
+        )
+        {
+            return parsed;
+        }
+
+        return 0;
     }
 
     // ============================================================
@@ -762,8 +1135,7 @@ public sealed class OracleService(
             InspectionStatus:
                 S(
                     row,
-                    "QC_STATUS",
-                    "INSPECTION_STATUS"
+                    "QC_STATUS"
                 ),
 
             VendorId:
@@ -868,6 +1240,24 @@ public sealed class OracleService(
                     "GRN_NUMBER"
                 ),
 
+            RcvTransactionId:
+                S(
+                    row,
+                    "RCV_TRANSACTION_ID"
+                ),
+
+            ShipmentLineId:
+                S(
+                    row,
+                    "SHIPMENT_LINE_ID"
+                ),
+
+            ItemId:
+                S(
+                    row,
+                    "ITEM_ID"
+                ),
+
             GrnReceivedQuantity:
                 N(
                     row,
@@ -926,6 +1316,14 @@ public sealed class OracleService(
                     "VENDOR_NAME"
                 ),
 
+            // IMPORTANT:
+            // Actual numeric Oracle AP invoice ID.
+            OracleInvoiceId:
+                S(
+                    row,
+                    "INVOICE_ID"
+                ),
+
             InvoiceNumber:
                 S(
                     row,
@@ -943,8 +1341,7 @@ public sealed class OracleService(
                 N(
                     row,
                     "INVOICE_AMOUNT"
-                )
-                ?? 0,
+                ) ?? 0,
 
             AmountPaid:
                 N(

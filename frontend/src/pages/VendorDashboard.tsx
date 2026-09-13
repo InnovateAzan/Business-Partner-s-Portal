@@ -13,6 +13,10 @@ import type {
   OracleSupplier,
   PortalInvoice,
 } from "../types";
+import {
+  formatPakistanFiscalWindowStart,
+  isInPakistanFiscalWindow,
+} from "../utils/pakistanFiscalWindow";
 
 const money = (v: number | null | undefined) =>
   `PKR ${Number(v || 0).toLocaleString()}`;
@@ -106,33 +110,83 @@ export function VendorDashboard() {
       );
   }, []);
 
+  const fiscalNow = useMemo(() => new Date(), []);
+
+  const visibleRows = useMemo(
+    () =>
+      rows.filter((x) =>
+        isInPakistanFiscalWindow(
+          x.receiptDate ||
+            x.poCreationDate ||
+            x.poApprovedDate,
+          fiscalNow
+        )
+      ),
+    [fiscalNow, rows]
+  );
+
+  const dashboardInvoices = useMemo(
+    () =>
+      invoices.filter((x) =>
+        isInPakistanFiscalWindow(
+          x.invoiceDate,
+          fiscalNow
+        )
+      ),
+    [fiscalNow, invoices]
+  );
+
+  const dashboardPortalInvoices = useMemo(
+    () =>
+      portalInvoices.filter((x) =>
+        isInPakistanFiscalWindow(
+          x.submissionDate || x.invoiceDate,
+          fiscalNow
+        )
+      ),
+    [fiscalNow, portalInvoices]
+  );
+
   const poMap = useMemo(
     () =>
       new Map(
-        rows
+        visibleRows
           .filter((x) => x.poNumber)
           .map((x) => [
             x.poNumber,
             x,
           ])
       ),
-    [rows]
+    [visibleRows]
   );
 
-  const grns =
-    rows.filter(
-      (x) => x.grnNumber
-    );
+  const grns = visibleRows.filter(
+    (x) =>
+      x.grnNumber &&
+      (x.quantityAvailableToInvoice || 0) > 0 &&
+      ![
+        "PENDING",
+        "PENDING QC",
+        "PENDING_QC",
+        "AWAITING INSPECTION",
+        "NOT RECEIVED",
+        "REJECTED",
+      ].includes((x.inspectionStatus || "").toUpperCase())
+  );
+
+  const availableGrnNumbers = new Set(
+    grns.map((x) => x.grnNumber)
+  );
 
   const submittedKeys =
     new Set(
-      invoices.map((x) =>
+      dashboardInvoices.map((x) =>
         x.invoiceNumber.toLowerCase()
       )
     );
 
   const pendingPortal =
-    portalInvoices.filter(
+    dashboardPortalInvoices.filter(
       (x) =>
         !submittedKeys.has(
           (
@@ -142,7 +196,7 @@ export function VendorDashboard() {
     );
 
   const paid =
-    invoices.filter((x) =>
+    dashboardInvoices.filter((x) =>
       (
         x.paymentStatus || ""
       )
@@ -151,7 +205,7 @@ export function VendorDashboard() {
     );
 
   const returned =
-    invoices.filter((x) =>
+    dashboardInvoices.filter((x) =>
       (
         x.approvalStatus || ""
       )
@@ -160,7 +214,7 @@ export function VendorDashboard() {
     );
 
   const cancelled =
-    invoices.filter((x) =>
+    dashboardInvoices.filter((x) =>
       (
         x.approvalStatus || ""
       )
@@ -176,7 +230,7 @@ export function VendorDashboard() {
     );
 
   const totalInv =
-    invoices.reduce(
+    dashboardInvoices.reduce(
       (a, x) =>
         a + x.invoiceAmount,
       0
@@ -193,6 +247,9 @@ export function VendorDashboard() {
       <div className="last-update">
         Last updated:{" "}
         {new Date().toLocaleString()}
+        <span className="vendor-data-window">
+          Data from {formatPakistanFiscalWindowStart()}
+        </span>
       </div>
 
       <section className="kpi-grid">
@@ -213,13 +270,15 @@ export function VendorDashboard() {
           ],
           [
             "GRNs Available",
-            grns.length,
+            availableGrnNumbers.size,
             money(
               grns.reduce(
                 (a, x) =>
                   a +
-                  (x.grnReceivedQuantity ||
-                    0),
+                  (x.quantityAvailableToInvoice ??
+                    x.grnReceivedQuantity ??
+                    0) *
+                    (x.unitPrice || 0),
                 0
               )
             ),
@@ -228,7 +287,7 @@ export function VendorDashboard() {
           ],
           [
             "Invoices Submitted",
-            invoices.length +
+            dashboardInvoices.length +
               pendingPortal.filter(
                 (x) =>
                   x.status !==
@@ -316,7 +375,7 @@ export function VendorDashboard() {
             <div className="donut">
               <div>
                 <strong>
-                  {invoices.length}
+                  {dashboardInvoices.length}
                 </strong>
 
                 <span>
@@ -329,7 +388,7 @@ export function VendorDashboard() {
               {[
                 [
                   "Submitted",
-                  invoices.filter((x) =>
+                  dashboardInvoices.filter((x) =>
                     (
                       x.approvalStatus ||
                       ""
@@ -342,7 +401,7 @@ export function VendorDashboard() {
                 ],
                 [
                   "Pending Finance",
-                  invoices.filter((x) =>
+                  dashboardInvoices.filter((x) =>
                     (
                       x.approvalStatus ||
                       ""
@@ -421,7 +480,7 @@ export function VendorDashboard() {
             </thead>
 
             <tbody>
-              {invoices
+              {dashboardInvoices
                 .slice(0, 5)
                 .map((x) => (
                   <tr
@@ -470,7 +529,7 @@ export function VendorDashboard() {
                   </tr>
                 ))}
 
-              {!invoices.length && (
+              {!dashboardInvoices.length && (
                 <tr>
                   <td
                     colSpan={5}
@@ -566,7 +625,7 @@ export function VendorDashboard() {
               GRNs
             </h3>
 
-            <Link to="/grns">
+            <Link to="/purchase-orders">
               View All →
             </Link>
           </div>
@@ -647,11 +706,11 @@ export function VendorDashboard() {
           </div>
 
           <h3>
-            Create Invoice
+            Submit Invoice
           </h3>
 
           <p>
-            Create a new invoice
+            Submit a new invoice
             against your eligible
             POs and GRNs.
           </p>
@@ -660,7 +719,7 @@ export function VendorDashboard() {
             className="primary-btn"
             to="/invoices/new"
           >
-            ＋ Create New Invoice
+            ＋ Submit Invoice
           </Link>
         </div>
       </section>
@@ -695,7 +754,7 @@ export function VendorDashboard() {
 
               <b>
                 {money(
-                  invoices.reduce(
+                  dashboardInvoices.reduce(
                     (a, x) =>
                       a +
                       (x.outstandingAmount ||
@@ -729,7 +788,7 @@ export function VendorDashboard() {
             </thead>
 
             <tbody>
-              {invoices
+              {dashboardInvoices
                 .slice(0, 5)
                 .map((x) => (
                   <tr

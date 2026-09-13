@@ -60,10 +60,33 @@ const label = (
     return "Rejected";
   }
 
-  return (
-    status ||
-    "Not Required"
-  );
+  if (
+    normalized ===
+    "NOT REQUIRED" ||
+    normalized ===
+    "NOT_REQUIRED"
+  ) {
+    return "Not Required";
+  }
+
+  /*
+   * IMPORTANT:
+   * Do not convert NULL / blank Oracle QC status
+   * into "Not Required".
+   *
+   * If Oracle does not return QC_STATUS or
+   * INSPECTION_STATUS, show that the status is
+   * unavailable instead of displaying incorrect data.
+   */
+  if (!normalized) {
+    return "Status Not Available";
+  }
+
+  /*
+   * Preserve any other actual Oracle status
+   * exactly as received.
+   */
+  return status!.trim();
 };
 
 function statusClass(
@@ -86,6 +109,13 @@ function statusClass(
       "Not Received"
   ) {
     return "red";
+  }
+
+  if (
+    value ===
+    "Status Not Available"
+  ) {
+    return "";
   }
 
   return "green";
@@ -239,12 +269,6 @@ export function GrnsPage() {
       );
   }, []);
 
-  /*
-   * Keep Oracle QC options visible
-   * even if the currently loaded
-   * vendor has no row for one of
-   * the statuses.
-   */
   const statusOptions =
     useMemo(
       () => [
@@ -278,6 +302,22 @@ export function GrnsPage() {
 
           label:
             "Rejected",
+        },
+
+        {
+          value:
+            "Not Required",
+
+          label:
+            "Not Required",
+        },
+
+        {
+          value:
+            "Status Not Available",
+
+          label:
+            "Status Not Available",
         },
       ],
       []

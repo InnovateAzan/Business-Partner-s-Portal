@@ -87,21 +87,38 @@ public static class VendorAccessEndpoints
                                 term));
                 }
 
+                // Return the complete Oracle supplier result set.
+                // The previous Take(500) cap caused the selector to show
+                // only a subset while the dashboard correctly reported
+                // the full Oracle vendor count (for example 3,661).
                 var rows =
                     query
-                        .Take(500)
+                        .OrderBy(x => x.VendorName)
+                        .ThenBy(x => x.VendorId)
                         .ToList();
+
+                // Load portal contact overrides once instead of executing
+                // one PostgreSQL query per Oracle vendor. This keeps the
+                // full-list request practical even with several thousand
+                // suppliers.
+                var portalContacts =
+                    await GetPortalContactsAsync(
+                        db,
+                        ct);
 
                 var result =
                     new List<object>();
 
                 foreach (var supplier in rows)
                 {
-                    var portalContact =
-                        await GetPortalContactAsync(
-                            db,
-                            supplier.VendorId,
-                            ct);
+                    portalContacts.TryGetValue(
+                        supplier.VendorId,
+                        out var portalContact);
+
+                    portalContact ??=
+                        new PortalContact(
+                            null,
+                            null);
 
                     result.Add(
                         new
@@ -891,6 +908,61 @@ public static class VendorAccessEndpoints
     private sealed record PortalContact(
         string? Email,
         string? Phone);
+
+    private static async Task<Dictionary<string, PortalContact>>
+        GetPortalContactsAsync(
+            AppDbContext db,
+            CancellationToken ct)
+    {
+        var result =
+            new Dictionary<string, PortalContact>(
+                StringComparer.OrdinalIgnoreCase);
+
+        var connection =
+            db.Database.GetDbConnection();
+
+        if (
+            connection.State !=
+            System.Data.ConnectionState.Open)
+        {
+            await connection.OpenAsync(ct);
+        }
+
+        await using var command =
+            connection.CreateCommand();
+
+        command.CommandText =
+            """
+            SELECT oracle_vendor_id, email, phone
+            FROM master.vendor_portal_contacts
+            """;
+
+        await using var reader =
+            await command.ExecuteReaderAsync(ct);
+
+        while (await reader.ReadAsync(ct))
+        {
+            var oracleVendorId =
+                Convert.ToString(
+                    reader.GetValue(0));
+
+            if (string.IsNullOrWhiteSpace(oracleVendorId))
+            {
+                continue;
+            }
+
+            result[oracleVendorId] =
+                new PortalContact(
+                    reader.IsDBNull(1)
+                        ? null
+                        : reader.GetString(1),
+                    reader.IsDBNull(2)
+                        ? null
+                        : reader.GetString(2));
+        }
+
+        return result;
+    }
 
     private static async Task<PortalContact>
         GetPortalContactAsync(

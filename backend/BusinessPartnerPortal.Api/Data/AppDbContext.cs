@@ -318,7 +318,6 @@ public sealed class AppDbContext(
 
                 Map(e, "id", x => x.Id);
 
-                // PostgreSQL identity column.
                 e.Property(
                         x => x.PkId
                     )
@@ -531,6 +530,14 @@ public sealed class AppDbContext(
                 Map(e, "created_at", x => x.CreatedAt);
             });
 
+        // ========================================================
+        // TRUSTED DEVICE
+        //
+        // IMPORTANT:
+        // C# property TokenHash maps to the EXISTING PostgreSQL
+        // column security.trusted_devices.device_token_hash.
+        // ========================================================
+
         b.Entity<TrustedDevice>(
             e =>
             {
@@ -544,12 +551,45 @@ public sealed class AppDbContext(
                 );
 
                 Map(e, "id", x => x.Id);
-                Map(e, "user_id", x => x.UserId);
-                Map(e, "token_hash", x => x.TokenHash);
-                Map(e, "expires_at", x => x.ExpiresAt);
-                Map(e, "last_used_at", x => x.LastUsedAt);
-                Map(e, "revoked_at", x => x.RevokedAt);
-                Map(e, "created_at", x => x.CreatedAt);
+
+                Map(
+                    e,
+                    "user_id",
+                    x => x.UserId
+                );
+
+                // FIX:
+                // Previously this was "token_hash".
+                // Actual database column is "device_token_hash".
+                Map(
+                    e,
+                    "device_token_hash",
+                    x => x.TokenHash
+                );
+
+                Map(
+                    e,
+                    "expires_at",
+                    x => x.ExpiresAt
+                );
+
+                Map(
+                    e,
+                    "last_used_at",
+                    x => x.LastUsedAt
+                );
+
+                Map(
+                    e,
+                    "revoked_at",
+                    x => x.RevokedAt
+                );
+
+                Map(
+                    e,
+                    "created_at",
+                    x => x.CreatedAt
+                );
             });
     }
 

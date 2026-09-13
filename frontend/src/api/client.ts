@@ -1,6 +1,7 @@
 import axios from "axios";
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "https://localhost:7044/api/v1";
+const apiBaseUrl =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:5044/api/v1";
 const sessionKey = import.meta.env.VITE_SESSION_STORAGE_KEY || "bpp_auth";
 
 export const api = axios.create({

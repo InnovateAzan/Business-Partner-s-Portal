@@ -17,6 +17,12 @@ public static class VendorAccessEndpoints
         bool IsActive
     );
 
+
+    public sealed record UpdateVendorUserRequest(
+        string FullName,
+        string Email
+    );
+
     public static IEndpointRouteBuilder MapVendorAccessEndpoints(
         this IEndpointRouteBuilder app)
     {
@@ -37,6 +43,9 @@ public static class VendorAccessEndpoints
                 CancellationToken ct) =>
             {
                 EnsureAuthorized(current);
+
+                var now =
+                    DateTimeOffset.UtcNow;
 
                 var query =
                     from vendorUser
@@ -73,6 +82,16 @@ public static class VendorAccessEndpoints
 
                         lastLoginAt =
                             user.LastLoginAt,
+
+                        failedLoginAttempts =
+                            user.FailedLoginAttempts,
+
+                        lockoutUntil =
+                            user.LockoutUntil,
+
+                        isLocked =
+                            user.LockoutUntil != null &&
+                            user.LockoutUntil > now,
 
                         vendorId =
                             vendor.Id,
@@ -120,14 +139,19 @@ public static class VendorAccessEndpoints
                     from mapping in db.VendorUsers
                     join user in db.Users on mapping.UserId equals user.Id
                     join vendor in db.Vendors on mapping.VendorId equals vendor.Id
-                    where mapping.UserId == userId && mapping.IsActive && user.IsActive
+                    where mapping.UserId == userId
                     select new { User = user, Vendor = vendor }
                 ).FirstOrDefaultAsync(ct)
                     ?? throw new ApiException(404, "Vendor portal user not found.");
 
-                if (!string.Equals(vendorUser.User.UserType, "VENDOR", StringComparison.OrdinalIgnoreCase) || !string.IsNullOrWhiteSpace(vendorUser.User.PasswordHash))
+                if (!string.Equals(
+                    vendorUser.User.UserType,
+                    "VENDOR",
+                    StringComparison.OrdinalIgnoreCase))
                 {
-                    throw new ApiException(400, "Account setup email is not available for this vendor.");
+                    throw new ApiException(
+                        400,
+                        "Only vendor accounts can receive a password setup email.");
                 }
 
                 var now = DateTimeOffset.UtcNow;
@@ -142,13 +166,121 @@ public static class VendorAccessEndpoints
                 {
                     await emailSender.SendPortalAccessAsync(vendorUser.User.Email, vendorUser.Vendor.VendorName, setupUrl, ct);
                     await WriteAuditAsync(db, current.UserId, vendorUser.Vendor.Id, userId, "VENDOR_ACCOUNT_SETUP_EMAIL_RESENT", ct);
-                    return Results.Ok(new { message = "Account setup email has been sent successfully." });
+                    return Results.Ok(new { message = "Password setup email has been sent successfully." });
                 }
                 catch
                 {
                     await WriteAuditAsync(db, current.UserId, vendorUser.Vendor.Id, userId, "VENDOR_ACCOUNT_SETUP_EMAIL_RESEND_FAILED", ct);
                     throw new ApiException(500, "Email could not be sent. Please check the vendor email address or email configuration.");
                 }
+            });
+
+        // ========================================================
+        // UPDATE VENDOR USER
+        //
+        // Vendor Access is also available to Supply Chain, so this
+        // endpoint deliberately keeps the account type/role fixed
+        // to VENDOR and only allows identity fields to be updated.
+        // ========================================================
+
+        group.MapPut(
+            "/{userId:guid}",
+            async (
+                Guid userId,
+                UpdateVendorUserRequest request,
+                CurrentUser current,
+                AppDbContext db,
+                CancellationToken ct) =>
+            {
+                EnsureAuthorized(current);
+
+                var vendorUser = await (
+                    from mapping in db.VendorUsers
+                    join user in db.Users on mapping.UserId equals user.Id
+                    join vendor in db.Vendors on mapping.VendorId equals vendor.Id
+                    where mapping.UserId == userId
+                    select new { User = user, Vendor = vendor }
+                ).FirstOrDefaultAsync(ct)
+                    ?? throw new ApiException(404, "Vendor portal user not found.");
+
+                if (!string.Equals(
+                    vendorUser.User.UserType,
+                    "VENDOR",
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new ApiException(
+                        400,
+                        "Only vendor accounts can be managed here.");
+                }
+
+                var fullName = request.FullName?.Trim() ?? string.Empty;
+                var email = request.Email?.Trim().ToLowerInvariant() ?? string.Empty;
+
+                if (string.IsNullOrWhiteSpace(fullName))
+                {
+                    throw new ApiException(400, "Full name is required.");
+                }
+
+                if (string.IsNullOrWhiteSpace(email))
+                {
+                    throw new ApiException(400, "Email is required.");
+                }
+
+                var duplicate = await db.Users.AnyAsync(
+                    x => x.Id != userId && x.Email.ToLower() == email,
+                    ct);
+
+                if (duplicate)
+                {
+                    throw new ApiException(
+                        409,
+                        "Another user already uses this email.");
+                }
+
+                vendorUser.User.FullName = fullName;
+                vendorUser.User.Email = email;
+                vendorUser.User.UserType = "VENDOR";
+                vendorUser.User.UpdatedAt = DateTimeOffset.UtcNow;
+
+                var vendorRole = await db.Roles
+                    .FirstOrDefaultAsync(x => x.Code == "VENDOR", ct)
+                    ?? throw new ApiException(
+                        409,
+                        "VENDOR role is not configured.");
+
+                var existingRoles = await db.UserRoles
+                    .Where(x => x.UserId == userId)
+                    .ToListAsync(ct);
+
+                db.UserRoles.RemoveRange(existingRoles);
+
+                db.UserRoles.Add(
+                    new UserRole
+                    {
+                        UserId = userId,
+                        RoleId = vendorRole.Id
+                    });
+
+                await db.SaveChangesAsync(ct);
+
+                await WriteAuditAsync(
+                    db,
+                    current.UserId,
+                    vendorUser.Vendor.Id,
+                    userId,
+                    "VENDOR_USER_UPDATED",
+                    ct);
+
+                return Results.Ok(
+                    new
+                    {
+                        userId,
+                        fullName = vendorUser.User.FullName,
+                        email = vendorUser.User.Email,
+                        userType = "VENDOR",
+                        role = "VENDOR",
+                        message = "Vendor user updated successfully."
+                    });
             });
 
         // ========================================================
@@ -225,6 +357,64 @@ public static class VendorAccessEndpoints
 
                         isActive =
                             request.IsActive
+                    });
+            });
+
+        // ========================================================
+        // UNLOCK VENDOR ACCOUNT
+        // ========================================================
+
+        group.MapPost(
+            "/{userId:guid}/unlock",
+            async (
+                Guid userId,
+                CurrentUser current,
+                AppDbContext db,
+                CancellationToken ct) =>
+            {
+                EnsureAuthorized(current);
+
+                var vendorUser = await (
+                    from mapping in db.VendorUsers
+                    join user in db.Users on mapping.UserId equals user.Id
+                    join vendor in db.Vendors on mapping.VendorId equals vendor.Id
+                    where mapping.UserId == userId
+                    select new { User = user, Vendor = vendor }
+                ).FirstOrDefaultAsync(ct)
+                    ?? throw new ApiException(404, "Vendor portal user not found.");
+
+                if (!string.Equals(
+                    vendorUser.User.UserType,
+                    "VENDOR",
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new ApiException(
+                        400,
+                        "Only vendor accounts can be unlocked here.");
+                }
+
+                vendorUser.User.FailedLoginAttempts = 0;
+                vendorUser.User.LockoutUntil = null;
+                vendorUser.User.UpdatedAt = DateTimeOffset.UtcNow;
+
+                await db.SaveChangesAsync(ct);
+
+                await WriteAuditAsync(
+                    db,
+                    current.UserId,
+                    vendorUser.Vendor.Id,
+                    userId,
+                    "VENDOR_ACCOUNT_UNLOCKED",
+                    ct);
+
+                return Results.Ok(
+                    new
+                    {
+                        userId,
+                        isLocked = false,
+                        failedLoginAttempts = 0,
+                        lockoutUntil = (DateTimeOffset?)null,
+                        message = "Vendor account unlocked successfully."
                     });
             });
 

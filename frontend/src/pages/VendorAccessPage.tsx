@@ -3,11 +3,14 @@ import {
   useMemo,
   useState,
 } from "react";
+import type { FormEvent } from "react";
 
 import {
   api,
   getApiErrorMessage,
 } from "../api/client";
+
+import "./UsersRolesPage.css";
 
 type ExistingVendorAccess = {
   vendorId: string;
@@ -25,6 +28,9 @@ type ExistingVendorAccess = {
   passwordSetupCompleted: boolean;
 
   lastLoginAt?: string | null;
+  failedLoginAttempts?: number;
+  lockoutUntil?: string | null;
+  isLocked?: boolean;
 };
 
 type OracleVendor = {
@@ -58,6 +64,11 @@ type OracleVendor = {
   state?: string | null;
   postalCode?: string | null;
   country?: string | null;
+};
+
+type VendorEditForm = {
+  fullName: string;
+  email: string;
 };
 
 type GrantResponse = {
@@ -131,6 +142,23 @@ function getVendorAddress(
   return parts.length
     ? parts.join(", ")
     : "-";
+}
+
+function getAccountStatus(row: ExistingVendorAccess) {
+  if (row.isLocked) {
+    return "Locked";
+  }
+
+  if (!row.accessActive || !row.userActive) {
+    return "Disabled";
+  }
+
+  return "Enabled";
+}
+
+function csvEscape(value: unknown) {
+  const text = String(value ?? "");
+  return `"${text.replaceAll('"', '""')}"`;
 }
 
 export function VendorAccessPage() {
@@ -274,6 +302,40 @@ export function VendorAccessPage() {
     setDeleting,
   ] =
     useState(false);
+
+
+  const [
+    statusFilter,
+    setStatusFilter,
+  ] = useState("ALL");
+
+  const [
+    editRow,
+    setEditRow,
+  ] = useState<ExistingVendorAccess | null>(null);
+
+  const [
+    editForm,
+    setEditForm,
+  ] = useState<VendorEditForm>({
+    fullName: "",
+    email: "",
+  });
+
+  const [
+    editSaving,
+    setEditSaving,
+  ] = useState(false);
+
+  const filteredAccessRows = useMemo(() => {
+    if (statusFilter === "ALL") {
+      return accessRows;
+    }
+
+    return accessRows.filter(
+      (row) => getAccountStatus(row).toUpperCase() === statusFilter
+    );
+  }, [accessRows, statusFilter]);
 
   // ============================================================
   // LOAD EXISTING
@@ -749,6 +811,92 @@ export function VendorAccessPage() {
   }
 
   // ============================================================
+  // EDIT VENDOR USER / EXPORT
+  // ============================================================
+
+  function openEditVendor(row: ExistingVendorAccess) {
+    setOpenMenuVendorId(null);
+    setPageError("");
+    setPageSuccess("");
+    setEditRow(row);
+    setEditForm({
+      fullName: row.userName || row.vendorName,
+      email: row.email || "",
+    });
+  }
+
+  async function saveVendorUser(event: FormEvent) {
+    event.preventDefault();
+
+    if (!editRow) return;
+
+    const fullName = editForm.fullName.trim();
+    const email = editForm.email.trim().toLowerCase();
+
+    if (!fullName || !email) {
+      setPageError("Full name and email are required.");
+      return;
+    }
+
+    setEditSaving(true);
+    setPageError("");
+    setPageSuccess("");
+
+    try {
+      const response = await api.put(
+        `/vendor-access/${editRow.userId}`,
+        { fullName, email }
+      );
+
+      setPageSuccess(
+        response.data?.message ?? "Vendor user updated successfully."
+      );
+      setEditRow(null);
+      await loadExistingAccess();
+    } catch (error) {
+      setPageError(getApiErrorMessage(error));
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  function exportVendorAccess() {
+    const headers = [
+      "Vendor",
+      "Oracle Vendor ID",
+      "Email",
+      "Status",
+      "Last Access",
+    ];
+
+    const lines = [
+      headers.map(csvEscape).join(","),
+      ...filteredAccessRows.map((row) =>
+        [
+          row.vendorName,
+          row.oracleVendorId ?? "",
+          row.email,
+          getAccountStatus(row),
+          formatDateTime(row.lastLoginAt),
+        ].map(csvEscape).join(",")
+      ),
+    ];
+
+    const blob = new Blob(["\uFEFF" + lines.join("\r\n")], {
+      type: "text/csv;charset=utf-8;",
+    });
+
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "vendor-access.csv";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  // ============================================================
   // ENABLE / DISABLE
   // ============================================================
 
@@ -769,7 +917,7 @@ export function VendorAccessPage() {
           `/vendor-access/${row.userId}/active`,
           {
             isActive:
-              !row.accessActive,
+              !(row.accessActive && row.userActive),
           }
         );
 
@@ -777,13 +925,14 @@ export function VendorAccessPage() {
         response.data?.message
         ??
         (
-          row.accessActive
+          row.accessActive && row.userActive
             ? "Vendor portal access disabled."
             : "Vendor portal access enabled."
         )
       );
 
       await loadExistingAccess();
+      setEditRow(null);
     } catch (error) {
       setPageError(
         getApiErrorMessage(
@@ -793,14 +942,40 @@ export function VendorAccessPage() {
     }
   }
 
+  async function unlockAccount(
+    row: ExistingVendorAccess
+  ) {
+    setOpenMenuVendorId(null);
+    setPageError("");
+    setPageSuccess("");
+
+    try {
+      const response = await api.post(
+        `/vendor-access/${row.userId}/unlock`
+      );
+
+      setPageSuccess(
+        response.data?.message ??
+          "Vendor account unlocked successfully."
+      );
+
+      await loadExistingAccess();
+      setEditRow(null);
+    } catch (error) {
+      setPageError(
+        getApiErrorMessage(error)
+      );
+    }
+  }
+
   async function resendSetupEmail(row: ExistingVendorAccess) {
     setOpenMenuVendorId(null);
-    if (!window.confirm(`Send a new account setup email to ${row.email}?`)) return;
+    if (!window.confirm(`Send a password setup email to ${row.email}?`)) return;
     setPageError("");
     setPageSuccess("");
     try {
       const response = await api.post(`/vendor-access/${row.userId}/resend-setup-email`);
-      setPageSuccess(response.data?.message ?? "Account setup email has been sent successfully.");
+      setPageSuccess(response.data?.message ?? "Password setup email has been sent successfully.");
     } catch {
       setPageError("Email could not be sent. Please check the vendor email address or email configuration.");
     }
@@ -868,15 +1043,51 @@ export function VendorAccessPage() {
             </p>
           </div>
 
-          <button
-            type="button"
-            className="primary-btn vendor-add-btn"
-            onClick={openDrawer}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-end",
+              gap: 10,
+              flexWrap: "wrap",
+            }}
           >
-            <span>＋</span>
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              aria-label="Filter vendor access by status"
+              style={{
+                minWidth: 150,
+                height: 42,
+                border: "1px solid #d7e0db",
+                borderRadius: 8,
+                padding: "0 12px",
+                background: "#fff",
+              }}
+            >
+              <option value="ALL">Status: All</option>
+              <option value="ENABLED">Enabled</option>
+              <option value="DISABLED">Disabled</option>
+              <option value="LOCKED">Locked</option>
+            </select>
 
-            Add Vendor
-          </button>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={exportVendorAccess}
+            >
+              Export
+            </button>
+
+            <button
+              type="button"
+              className="primary-btn vendor-add-btn"
+              onClick={openDrawer}
+            >
+              <span>＋</span>
+              Add Vendor
+            </button>
+          </div>
         </div>
 
         {pageError && (
@@ -893,14 +1104,12 @@ export function VendorAccessPage() {
 
         <div className="vendor-existing-section">
           <div className="vendor-existing-heading">
-            <h3>
-              Existing Vendor Access
-            </h3>
+            <div>
+              <h3>Existing Vendor Access</h3>
+              <p>View and manage portal access for existing vendors.</p>
+            </div>
 
-            <p>
-              View and manage portal
-              access for existing vendors.
-            </p>
+
           </div>
 
           {loading ? (
@@ -920,7 +1129,7 @@ export function VendorAccessPage() {
 
                     <th>Email</th>
 
-                    <th>Access</th>
+                    <th>Status</th>
 
                     <th>
                       Last Access
@@ -931,7 +1140,7 @@ export function VendorAccessPage() {
                 </thead>
 
                 <tbody>
-                  {accessRows.map(
+                  {filteredAccessRows.map(
                     (row) => (
                       <tr
                         key={`${row.vendorId}-${row.userId}`}
@@ -957,14 +1166,14 @@ export function VendorAccessPage() {
                         <td>
                           <span
                             className={`status ${
-                              row.accessActive
-                                ? "green"
-                                : "red"
+                              getAccountStatus(row) === "Locked"
+                                ? "orange"
+                                : getAccountStatus(row) === "Enabled"
+                                  ? "green"
+                                  : "red"
                             }`}
                           >
-                            {row.accessActive
-                              ? "Enabled"
-                              : "Disabled"}
+                            {getAccountStatus(row)}
                           </span>
                         </td>
 
@@ -1001,48 +1210,13 @@ export function VendorAccessPage() {
                             row.vendorId && (
                             <div
                               className="vendor-row-menu"
-                              onMouseDown={(
-                                event
-                              ) =>
-                                event.stopPropagation()
-                              }
+                              onMouseDown={(event) => event.stopPropagation()}
                             >
                               <button
                                 type="button"
-                                onClick={() =>
-                                  toggleAccess(
-                                    row
-                                  )
-                                }
+                                onClick={() => openEditVendor(row)}
                               >
-                                {row.accessActive
-                                  ? "Disable Access"
-                                  : "Enable Access"}
-                              </button>
-
-                              {!row.passwordSetupCompleted && (
-                                <button
-                                  type="button"
-                                  onClick={() => resendSetupEmail(row)}
-                                >
-                                  Resend Account Setup Email
-                                </button>
-                              )}
-
-                              <button
-                                type="button"
-                                className="vendor-delete-menu-btn"
-                                onClick={() => {
-                                  setOpenMenuVendorId(
-                                    null
-                                  );
-
-                                  setDeleteRow(
-                                    row
-                                  );
-                                }}
-                              >
-                                Delete Access
+                                Edit
                               </button>
                             </div>
                           )}
@@ -1051,7 +1225,7 @@ export function VendorAccessPage() {
                     )
                   )}
 
-                  {!accessRows.length && (
+                  {!filteredAccessRows.length && (
                     <tr>
                       <td
                         colSpan={6}
@@ -1067,8 +1241,8 @@ export function VendorAccessPage() {
 
               <div className="vendor-table-footer">
                 Showing{" "}
-                {accessRows.length}{" "}
-                {accessRows.length ===
+                {filteredAccessRows.length}{" "}
+                {filteredAccessRows.length ===
                 1
                   ? "vendor"
                   : "vendors"}
@@ -1077,6 +1251,184 @@ export function VendorAccessPage() {
           )}
         </div>
       </div>
+
+      {/* ======================================================
+          EDIT VENDOR USER
+      ====================================================== */}
+
+      {editRow && (
+        <div
+          className="admin-modal-backdrop"
+          onMouseDown={() => {
+            if (!editSaving) setEditRow(null);
+          }}
+        >
+          <div
+            className="admin-modal user-modal"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="admin-modal-header">
+              <div>
+                <h3>Edit Vendor User</h3>
+                <p>Manage vendor portal identity and account access.</p>
+              </div>
+
+              <button
+                type="button"
+                className="admin-modal-close"
+                onClick={() => setEditRow(null)}
+                disabled={editSaving}
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={saveVendorUser} className="admin-modal-body">
+              <div className="admin-form-grid">
+                <label>
+                  Full Name
+                  <input
+                    value={editForm.fullName}
+                    onChange={(event) =>
+                      setEditForm({ ...editForm, fullName: event.target.value })
+                    }
+                    required
+                  />
+                </label>
+
+                <label>
+                  Email
+                  <input
+                    type="email"
+                    value={editForm.email}
+                    onChange={(event) =>
+                      setEditForm({ ...editForm, email: event.target.value })
+                    }
+                    required
+                  />
+                </label>
+
+                <label>
+                  User Type
+                  <select value="VENDOR" disabled>
+                    <option value="VENDOR">VENDOR</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="admin-form-section">
+                <h4>Roles</h4>
+                <div className="role-selection-grid">
+                  <label className="role-selection">
+                    <input type="checkbox" checked readOnly />
+                    <span>
+                      <strong>Vendor</strong>
+                      <small>VENDOR</small>
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="user-account-status-card">
+                <div className="user-account-status-head">
+                  <div>
+                    <strong>Account Status</strong>
+                    <span
+                      className={`status ${
+                        getAccountStatus(editRow) === "Locked"
+                          ? "orange"
+                          : getAccountStatus(editRow) === "Enabled"
+                            ? "green"
+                            : "red"
+                      }`}
+                    >
+                      {getAccountStatus(editRow)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="user-account-status-grid">
+                  <div>
+                    <small>Failed Login Attempts</small>
+                    <strong>{editRow.failedLoginAttempts ?? 0}</strong>
+                  </div>
+                  <div>
+                    <small>Locked Until</small>
+                    <strong>{formatDateTime(editRow.lockoutUntil)}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 10,
+                  paddingTop: 4,
+                }}
+              >
+                {editRow.isLocked && (
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={() => unlockAccount(editRow)}
+                  >
+                    Unlock Account
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => toggleAccess(editRow)}
+                >
+                  {editRow.accessActive && editRow.userActive
+                    ? "Disable Access"
+                    : "Enable Access"}
+                </button>
+
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => resendSetupEmail(editRow)}
+                >
+                  Send Password Setup Email
+                </button>
+
+                <button
+                  type="button"
+                  className="danger-btn"
+                  onClick={() => {
+                    setEditRow(null);
+                    setDeleteRow(editRow);
+                  }}
+                >
+                  Delete Access
+                </button>
+              </div>
+
+              <div className="admin-modal-actions">
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => setEditRow(null)}
+                  disabled={editSaving}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  className="primary-btn"
+                  disabled={editSaving}
+                >
+                  {editSaving ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ======================================================
           ADD VENDOR DRAWER

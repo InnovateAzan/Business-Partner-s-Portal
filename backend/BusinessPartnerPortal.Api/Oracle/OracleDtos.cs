@@ -58,6 +58,9 @@ public sealed record OraclePoGrnDto(
     decimal? QuantityAvailableToInvoice,
 
     string? GrnNumber,
+    string? RcvTransactionId,
+    string? ShipmentLineId,
+    string? ItemId,
     decimal? GrnReceivedQuantity,
 
     DateTime? ReceiptDate,
@@ -70,6 +73,8 @@ public sealed record OraclePoGrnDto(
 
 public sealed record OracleInvoiceDto(
     string VendorId,
+
+    string? OracleInvoiceId,
 
     string? SupplierNumber,
     string? VendorName,

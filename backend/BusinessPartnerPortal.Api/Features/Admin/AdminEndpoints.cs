@@ -370,6 +370,11 @@ public static class AdminEndpoints
                             user.IsActive,
                             user.IsSuperAdmin,
                             user.LastLoginAt,
+                            user.FailedLoginAttempts,
+                            user.LockoutUntil,
+                            isLocked =
+                                user.LockoutUntil is not null &&
+                                user.LockoutUntil > DateTimeOffset.UtcNow,
                             roles
                         });
                 }
@@ -599,6 +604,112 @@ public static class AdminEndpoints
             });
 
         // =========================================================
+        // DELETE USER
+        // =========================================================
+
+        group.MapDelete(
+            "/users/{userId:guid}",
+            async (
+                Guid userId,
+                CurrentUser current,
+                AppDbContext db,
+                CancellationToken ct) =>
+            {
+                DemandAdmin(current);
+
+                if (userId == current.UserId)
+                {
+                    throw new ApiException(
+                        400,
+                        "You cannot delete your own signed-in account.");
+                }
+
+                var user =
+                    await db.Users
+                        .FirstOrDefaultAsync(
+                            x => x.Id == userId,
+                            ct)
+                    ?? throw new ApiException(
+                        404,
+                        "User not found.");
+
+                try
+                {
+                    db.Users.Remove(user);
+                    await db.SaveChangesAsync(ct);
+                }
+                catch (DbUpdateException)
+                {
+                    throw new ApiException(
+                        409,
+                        "This user has historical business or audit records and cannot be permanently deleted. Disable the user instead to preserve history.");
+                }
+
+                await Audit(
+                    db,
+                    current.UserId,
+                    "USER_DELETED",
+                    "User",
+                    userId,
+                    ct);
+
+                return Results.Ok(
+                    new
+                    {
+                        userId,
+                        message = "User deleted successfully."
+                    });
+            });
+
+        // =========================================================
+        // UNLOCK USER ACCOUNT
+        // =========================================================
+
+        group.MapPost(
+            "/users/{userId:guid}/unlock",
+            async (
+                Guid userId,
+                CurrentUser current,
+                AppDbContext db,
+                CancellationToken ct) =>
+            {
+                DemandAdmin(current);
+
+                var user =
+                    await db.Users
+                        .FirstOrDefaultAsync(
+                            x => x.Id == userId,
+                            ct)
+                    ?? throw new ApiException(
+                        404,
+                        "User not found.");
+
+                user.FailedLoginAttempts = 0;
+                user.LockoutUntil = null;
+                user.UpdatedAt = DateTimeOffset.UtcNow;
+
+                await db.SaveChangesAsync(ct);
+
+                await Audit(
+                    db,
+                    current.UserId,
+                    "USER_ACCOUNT_UNLOCKED",
+                    "User",
+                    user.Id,
+                    ct);
+
+                return Results.Ok(
+                    new
+                    {
+                        userId = user.Id,
+                        isLocked = false,
+                        failedLoginAttempts = 0,
+                        lockoutUntil = (DateTimeOffset?)null,
+                        message = "User account unlocked successfully."
+                    });
+            });
+
+        // =========================================================
         // SYSTEM CONFIG
         // =========================================================
 
@@ -663,91 +774,168 @@ public static class AdminEndpoints
                 DemandAdmin(current);
 
                 var connection =
-                    db.Database
-                        .GetDbConnection();
+                    db.Database.GetDbConnection();
 
                 if (
                     connection.State !=
-                    System.Data
-                        .ConnectionState.Open)
+                    System.Data.ConnectionState.Open)
                 {
-                    await connection
-                        .OpenAsync(ct);
+                    await connection.OpenAsync(ct);
                 }
 
                 await using var command =
-                    connection
-                        .CreateCommand();
+                    connection.CreateCommand();
 
                 command.CommandText =
                     """
                     SELECT
-                        id,
-                        user_id,
-                        action,
-                        entity_type,
-                        entity_id,
-                        correlation_id,
-                        created_at
-                    FROM audit.audit_logs
-                    ORDER BY created_at DESC
+                        a.id,
+                        a.user_id,
+                        COALESCE(
+                            CASE
+                                WHEN UPPER(COALESCE(actor.user_type, '')) = 'VENDOR'
+                                    THEN actor_vendor.vendor_name
+                                ELSE actor.full_name
+                            END,
+                            actor.full_name,
+                            'System'
+                        ) AS user_name,
+                        COALESCE(
+                            (
+                                SELECT string_agg(r.name, ', ' ORDER BY r.name)
+                                FROM security.user_roles ur
+                                JOIN security.roles r
+                                    ON r.id = ur.role_id
+                                WHERE ur.user_id = a.user_id
+                            ),
+                            CASE
+                                WHEN UPPER(COALESCE(actor.user_type, '')) = 'VENDOR' THEN 'Vendor'
+                                WHEN UPPER(COALESCE(actor.user_type, '')) = 'ADMIN' THEN 'Administrator'
+                                WHEN NULLIF(actor.user_type, '') IS NOT NULL THEN initcap(replace(lower(actor.user_type), '_', ' '))
+                                ELSE 'System'
+                            END
+                        ) AS role_name,
+                        a.action,
+                        a.entity_type,
+                        a.entity_id,
+                        CASE
+                            WHEN UPPER(COALESCE(a.entity_type, '')) = 'INVOICE'
+                                THEN COALESCE(invoice_row.invoice_number, a.entity_id::text, '-')
+                            WHEN UPPER(COALESCE(a.entity_type, '')) = 'USER'
+                                THEN COALESCE(target_user.full_name, a.entity_id::text, '-')
+                            WHEN UPPER(COALESCE(a.entity_type, '')) = 'ROLE'
+                                THEN COALESCE(target_role.name, a.entity_id::text, '-')
+                            WHEN UPPER(COALESCE(a.entity_type, '')) IN ('VENDOR', 'VENDORUSER')
+                                THEN COALESCE(target_vendor.vendor_name, actor_vendor.vendor_name, a.entity_id::text, '-')
+                            ELSE COALESCE(a.entity_id::text, '-')
+                        END AS reference,
+                        CASE
+                            WHEN UPPER(COALESCE(a.entity_type, '')) = 'INVOICE'
+                                THEN NULLIF(
+                                    concat_ws(
+                                        ', ',
+                                        CASE
+                                            WHEN NULLIF(invoice_row.po_number, '') IS NOT NULL
+                                                THEN 'PO ' || invoice_row.po_number
+                                        END,
+                                        CASE
+                                            WHEN NULLIF(invoice_row.grn_numbers, '') IS NOT NULL
+                                                THEN 'GRN ' || invoice_row.grn_numbers
+                                        END
+                                    ),
+                                    ''
+                                )
+                            WHEN UPPER(COALESCE(a.entity_type, '')) = 'USER'
+                                THEN COALESCE(target_user.email, 'User record updated')
+                            WHEN UPPER(COALESCE(a.entity_type, '')) = 'ROLE'
+                                THEN COALESCE(target_role.code, 'Role record updated')
+                            WHEN UPPER(COALESCE(a.entity_type, '')) IN ('VENDOR', 'VENDORUSER')
+                                THEN COALESCE(target_vendor.oracle_vendor_id, actor_vendor.oracle_vendor_id, 'Vendor access record updated')
+                            ELSE NULL
+                        END AS details,
+                        a.correlation_id,
+                        a.created_at
+                    FROM audit.audit_logs a
+                    LEFT JOIN security.users actor
+                        ON actor.id = a.user_id
+                    LEFT JOIN master.vendor_users actor_vendor_user
+                        ON actor_vendor_user.user_id = actor.id
+                       AND actor_vendor_user.is_active = true
+                    LEFT JOIN master.vendors actor_vendor
+                        ON actor_vendor.id = actor_vendor_user.vendor_id
+                    LEFT JOIN invoice.invoices invoice_row
+                        ON invoice_row.id = a.entity_id
+                       AND UPPER(COALESCE(a.entity_type, '')) = 'INVOICE'
+                    LEFT JOIN security.users target_user
+                        ON target_user.id = a.entity_id
+                       AND UPPER(COALESCE(a.entity_type, '')) = 'USER'
+                    LEFT JOIN security.roles target_role
+                        ON target_role.id = a.entity_id
+                       AND UPPER(COALESCE(a.entity_type, '')) = 'ROLE'
+                    LEFT JOIN master.vendors target_vendor
+                        ON target_vendor.id = a.entity_id
+                       AND UPPER(COALESCE(a.entity_type, '')) = 'VENDOR'
+                    ORDER BY a.created_at DESC
                     LIMIT 500
                     """;
 
-                var list =
-                    new List<object>();
+                var list = new List<object>();
 
                 await using var reader =
-                    await command
-                        .ExecuteReaderAsync(ct);
+                    await command.ExecuteReaderAsync(ct);
 
-                while (
-                    await reader
-                        .ReadAsync(ct))
+                while (await reader.ReadAsync(ct))
                 {
+                    var action =
+                        reader.IsDBNull(4)
+                            ? string.Empty
+                            : reader.GetString(4);
+
+                    var entityType =
+                        reader.IsDBNull(5)
+                            ? string.Empty
+                            : reader.GetString(5);
+
                     list.Add(
                         new
                         {
-                            id =
-                                reader.GetInt64(
-                                    0),
+                            id = reader.GetInt64(0),
 
                             userId =
-                                reader.IsDBNull(
-                                    1)
+                                reader.IsDBNull(1)
                                     ? null
-                                    : reader.GetGuid(
-                                            1)
-                                        .ToString(),
+                                    : reader.GetGuid(1).ToString(),
 
-                            action =
-                                reader.GetString(
-                                    2),
+                            user =
+                                reader.IsDBNull(2)
+                                    ? "System"
+                                    : reader.GetString(2),
 
-                            entityType =
-                                reader.GetString(
-                                    3),
+                            role =
+                                reader.IsDBNull(3)
+                                    ? "System"
+                                    : reader.GetString(3),
 
-                            entityId =
-                                reader.IsDBNull(
-                                    4)
-                                    ? null
-                                    : reader.GetGuid(
-                                            4)
-                                        .ToString(),
+                            action = ToDisplayText(action),
+                            module = ToDisplayText(entityType),
+
+                            recordReference =
+                                reader.IsDBNull(7)
+                                    ? "-"
+                                    : reader.GetString(7),
+
+                            details =
+                                reader.IsDBNull(8)
+                                    ? "-"
+                                    : reader.GetString(8),
 
                             correlationId =
-                                reader.IsDBNull(
-                                    5)
+                                reader.IsDBNull(9)
                                     ? null
-                                    : reader.GetGuid(
-                                            5)
-                                        .ToString(),
+                                    : reader.GetGuid(9).ToString(),
 
                             createdAt =
-                                reader.GetFieldValue<
-                                    DateTimeOffset>(
-                                    6)
+                                reader.GetFieldValue<DateTimeOffset>(10)
                         });
                 }
 
@@ -869,6 +1057,34 @@ public static class AdminEndpoints
                 )
                 """,
                 ct);
+    }
+
+    // =============================================================
+    // DISPLAY TEXT HELPER
+    // =============================================================
+
+    private static string ToDisplayText(
+        string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "-";
+        }
+
+        return string.Join(
+            " ",
+            value
+                .Trim()
+                .Replace('-', '_')
+                .Split(
+                    '_',
+                    StringSplitOptions.RemoveEmptyEntries)
+                .Select(
+                    part =>
+                        part.Length == 1
+                            ? part.ToUpperInvariant()
+                            : char.ToUpperInvariant(part[0]) +
+                              part[1..].ToLowerInvariant()));
     }
 
     // =============================================================

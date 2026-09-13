@@ -15,7 +15,7 @@ namespace BusinessPartnerPortal.Api.Features.Auth;
 
 public static class AuthEndpoints
 {
-    private const bool DeviceOtpEnabled = false;
+    private const bool DeviceOtpEnabled = true;
 
     public sealed record LoginRequest(
         string Email,
@@ -65,6 +65,7 @@ public static class AuthEndpoints
                 AppDbContext db,
                 JwtTokenService jwt,
                 EmailOtpSender emailSender,
+                IConfiguration config,
                 HttpContext http,
                 CancellationToken ct) =>
             {
@@ -136,15 +137,22 @@ public static class AuthEndpoints
 
                 if (
                     user.LockoutUntil is not null
-                    &&
-                    user.LockoutUntil >
-                    DateTimeOffset.UtcNow
                 )
                 {
-                    throw new ApiException(
-                        423,
-                        "Account is temporarily locked."
-                    );
+                    if (
+                        user.LockoutUntil >
+                        DateTimeOffset.UtcNow
+                    )
+                    {
+                        throw new ApiException(
+                            423,
+                            $"Account is temporarily locked until {user.LockoutUntil:dd-MMM-yyyy hh:mm tt}."
+                        );
+                    }
+
+                    // Lock period has expired. Start a fresh attempt cycle.
+                    user.LockoutUntil = null;
+                    user.FailedLoginAttempts = 0;
                 }
 
                 // ====================================================
@@ -171,14 +179,13 @@ public static class AuthEndpoints
                         5
                     )
                     {
+                        user.FailedLoginAttempts = 5;
+
                         user.LockoutUntil =
                             DateTimeOffset.UtcNow
                                 .AddMinutes(
                                     15
                                 );
-
-                        user.FailedLoginAttempts =
-                            0;
                     }
 
                     user.UpdatedAt =
@@ -187,6 +194,14 @@ public static class AuthEndpoints
                     await db.SaveChangesAsync(
                         ct
                     );
+
+                    if (user.LockoutUntil is not null)
+                    {
+                        throw new ApiException(
+                            423,
+                            "Account has been temporarily locked after 5 failed login attempts."
+                        );
+                    }
 
                     throw new ApiException(
                         401,
@@ -213,6 +228,26 @@ public static class AuthEndpoints
                 await db.SaveChangesAsync(
                     ct
                 );
+
+                var otpEnabled =
+                    !bool.TryParse(
+                        config[
+                            "LOGIN_OTP_ENABLED"
+                        ],
+                        out var enabled
+                    )
+                    ||
+                    enabled;
+
+                if (!otpEnabled)
+                {
+                    return await CreateLoginResponseAsync(
+                        user,
+                        db,
+                        jwt,
+                        ct
+                    );
+                }
 
                 // ====================================================
                 // OPTIONAL VENDOR DEVICE OTP
@@ -965,9 +1000,7 @@ public static class AuthEndpoints
                         ),
                         Convert.FromHexString(
                             Hash(
-                                request.Otp
-                                ??
-                                ""
+                                (request.Otp ?? "").Trim()
                             )
                         )
                     )

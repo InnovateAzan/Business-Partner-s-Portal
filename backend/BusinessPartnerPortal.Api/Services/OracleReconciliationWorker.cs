@@ -60,45 +60,99 @@ public sealed class OracleReconciliationWorker(
             foreach (var invoice in portalInvoices)
             {
                 var oracleInvoice = oracleRows.FirstOrDefault(x =>
-                    string.Equals(x.InvoiceNumber, invoice.InvoiceNumber, StringComparison.OrdinalIgnoreCase));
+                    string.Equals(
+                        x.InvoiceNumber,
+                        invoice.InvoiceNumber,
+                        StringComparison.OrdinalIgnoreCase));
 
                 if (oracleInvoice is null)
                     continue;
 
                 var nextStatus = Map(oracleInvoice);
-                if (nextStatus == invoice.Status)
+                var now = DateTimeOffset.UtcNow;
+
+                // IMPORTANT:
+                // APPS.PORTAL_INVOICES_V must return the real AP_INVOICES_ALL.INVOICE_ID.
+                // Never store Oracle invoice number in invoice.oracle_invoice_id because
+                // the attachment worker requires the numeric Oracle AP INVOICE_ID.
+                var hasValidOracleInvoiceId =
+                    long.TryParse(oracleInvoice.OracleInvoiceId, out var parsedOracleInvoiceId) &&
+                    parsedOracleInvoiceId > 0;
+
+                var oracleInvoiceIdChanged =
+                    hasValidOracleInvoiceId &&
+                    !string.Equals(
+                        invoice.OracleInvoiceId,
+                        parsedOracleInvoiceId.ToString(),
+                        StringComparison.Ordinal);
+
+                var statusChanged =
+                    !string.Equals(
+                        nextStatus,
+                        invoice.Status,
+                        StringComparison.OrdinalIgnoreCase);
+
+                // Even when status is already synchronized, repair oracle_invoice_id
+                // if an older version stored the invoice number there.
+                if (!statusChanged && !oracleInvoiceIdChanged)
                     continue;
 
                 var oldStatus = invoice.Status;
-                invoice.Status = nextStatus;
-                invoice.IntegrationStatus = "SUCCESS";
-                invoice.OracleInvoiceId = oracleInvoice.InvoiceNumber;
-                invoice.UpdatedAt = DateTimeOffset.UtcNow;
 
-                db.InvoiceStatusHistory.Add(new InvoiceStatusHistory
+                if (statusChanged)
                 {
-                    InvoiceId = invoice.Id,
-                    OldStatus = oldStatus,
-                    NewStatus = nextStatus,
-                    Source = "ORACLE_EBS",
-                    ChangedAt = DateTimeOffset.UtcNow
-                });
+                    invoice.Status = nextStatus;
+                    invoice.IntegrationStatus = "SUCCESS";
+                }
 
-                var vendorUserIds = await db.VendorUsers
-                    .Where(x => x.VendorId == mapping.Id && x.IsActive)
-                    .Select(x => x.UserId)
-                    .ToListAsync(ct);
+                if (oracleInvoiceIdChanged)
+                {
+                    invoice.OracleInvoiceId = parsedOracleInvoiceId.ToString();
+                }
+
+                invoice.UpdatedAt = now;
+
+                if (statusChanged)
+                {
+                    db.InvoiceStatusHistory.Add(new InvoiceStatusHistory
+                    {
+                        InvoiceId = invoice.Id,
+                        OldStatus = oldStatus,
+                        NewStatus = nextStatus,
+                        Source = "ORACLE_EBS",
+                        ChangedAt = now
+                    });
+                }
+
+                var vendorUserIds = statusChanged
+                    ? await db.VendorUsers
+                        .Where(x => x.VendorId == mapping.Id && x.IsActive)
+                        .Select(x => x.UserId)
+                        .ToListAsync(ct)
+                    : new List<Guid>();
 
                 await db.SaveChangesAsync(ct);
 
-                foreach (var userId in vendorUserIds)
+                if (oracleInvoiceIdChanged)
                 {
-                    await db.Database.ExecuteSqlInterpolatedAsync($"""
-                        INSERT INTO notification.notifications
-                        (id,user_id,title,message,notification_type,entity_type,entity_id,is_read,created_at,updated_at)
-                        VALUES
-                        ({Guid.NewGuid()},{userId},{"Invoice status updated"},{$"Invoice {invoice.InvoiceNumber} is now {nextStatus}."},{"INVOICE_STATUS"},{"Invoice"},{invoice.Id},false,now(),now())
-                        """, ct);
+                    logger.LogInformation(
+                        "Repaired Oracle INVOICE_ID for portal invoice {PortalInvoiceId}. InvoiceNumber={InvoiceNumber}, OracleInvoiceId={OracleInvoiceId}",
+                        invoice.Id,
+                        invoice.InvoiceNumber,
+                        parsedOracleInvoiceId);
+                }
+
+                if (statusChanged)
+                {
+                    foreach (var userId in vendorUserIds)
+                    {
+                        await db.Database.ExecuteSqlInterpolatedAsync($"""
+                            INSERT INTO notification.notifications
+                            (id,user_id,title,message,notification_type,entity_type,entity_id,is_read,created_at,updated_at)
+                            VALUES
+                            ({Guid.NewGuid()},{userId},{"Invoice status updated"},{$"Invoice {invoice.InvoiceNumber} is now {nextStatus}."},{"INVOICE_STATUS"},{"Invoice"},{invoice.Id},false,now(),now())
+                            """, ct);
+                    }
                 }
             }
         }
@@ -109,11 +163,13 @@ public sealed class OracleReconciliationWorker(
         var payment = (invoice.PaymentStatus ?? string.Empty).ToUpperInvariant();
         var approval = (invoice.ApprovalStatus ?? string.Empty).ToUpperInvariant();
 
-        if (payment.Contains("PAID")) return "PAID";
+        // Cancellation must take priority over payment so an Oracle-cancelled
+        // invoice never continues to appear as Paid in the portal.
         if (approval.Contains("CANCEL")) return "CANCELLED";
         if (approval.Contains("RETURN") || approval.Contains("REVERT")) return "RETURNED";
-        if (approval.Contains("APPROV") || approval.Contains("VALID")) return "ACCEPTED";
         if (approval.Contains("REJECT")) return "REJECTED";
-        return "UNDER_FINANCE_REVIEW";
+        if (payment.Contains("PAID")) return "PAID";
+        if (approval.Contains("APPROV") || approval.Contains("VALID")) return "APPROVED";
+        return "PENDING";
     }
 }

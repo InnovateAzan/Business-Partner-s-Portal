@@ -30,6 +30,9 @@ type PortalUser = {
   isActive: boolean;
   isSuperAdmin?: boolean;
   lastLoginAt?: string | null;
+  failedLoginAttempts?: number;
+  lockoutUntil?: string | null;
+  isLocked?: boolean;
   roles?: string[];
 };
 
@@ -166,6 +169,9 @@ export function UsersRolesPage() {
     useState<UserForm>(emptyUserForm);
 
   const [userSaving, setUserSaving] =
+    useState(false);
+
+  const [userDeleting, setUserDeleting] =
     useState(false);
 
   const [userError, setUserError] =
@@ -429,6 +435,63 @@ export function UsersRolesPage() {
         };
       }
     );
+  }
+
+  async function unlockUserAccount(
+    userId: string
+  ) {
+    setUserError("");
+
+    try {
+      await api.post(
+        `/admin/users/${userId}/unlock`
+      );
+
+      await loadData();
+    } catch (error) {
+      setUserError(
+        getApiErrorMessage(error)
+      );
+    }
+  }
+
+  async function deleteUser() {
+    if (!userForm.id) {
+      return;
+    }
+
+    const selectedUser = users.find(
+      (user) => user.id === userForm.id
+    );
+
+    const confirmed = window.confirm(
+      `Delete ${selectedUser?.fullName || userForm.email || "this user"}?\n\n` +
+        "This permanently removes the user when no business/audit records depend on the account. " +
+        "If the account has historical references, the system will block deletion and you should disable the user instead."
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setUserError("");
+    setUserDeleting(true);
+
+    try {
+      await api.delete(
+        `/admin/users/${userForm.id}`
+      );
+
+      setUserModalOpen(false);
+      setUserForm(emptyUserForm);
+      await loadData();
+    } catch (error) {
+      setUserError(
+        getApiErrorMessage(error)
+      );
+    } finally {
+      setUserDeleting(false);
+    }
   }
 
   async function saveUser(
@@ -880,14 +943,18 @@ export function UsersRolesPage() {
                       <td>
                         <span
                           className={`status ${
-                            user.isActive
-                              ? "green"
-                              : "red"
+                            user.isLocked
+                              ? "orange"
+                              : user.isActive
+                                ? "green"
+                                : "red"
                           }`}
                         >
-                          {user.isActive
-                            ? "Active"
-                            : "Disabled"}
+                          {user.isLocked
+                            ? "Locked"
+                            : user.isActive
+                              ? "Active"
+                              : "Disabled"}
                         </span>
                       </td>
 
@@ -1293,6 +1360,74 @@ export function UsersRolesPage() {
                 </label>
               </div>
 
+              {userForm.id && (() => {
+                const selectedUser = users.find(
+                  (user) => user.id === userForm.id
+                );
+
+                if (!selectedUser) return null;
+
+                return (
+                  <div className="user-account-status-card">
+                    <div className="user-account-status-head">
+                      <div>
+                        <strong>Account Status</strong>
+                        <span
+                          className={`status ${
+                            selectedUser.isLocked
+                              ? "orange"
+                              : selectedUser.isActive
+                                ? "green"
+                                : "red"
+                          }`}
+                        >
+                          {selectedUser.isLocked
+                            ? "Locked"
+                            : selectedUser.isActive
+                              ? "Active"
+                              : "Disabled"}
+                        </span>
+                      </div>
+
+                      {selectedUser.isLocked && (
+                        <button
+                          type="button"
+                          className="secondary-btn unlock-account-btn"
+                          onClick={() =>
+                            unlockUserAccount(selectedUser.id)
+                          }
+                        >
+                          Unlock Account
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="user-account-status-grid">
+                      <div>
+                        <small>Failed Login Attempts</small>
+                        <strong>{selectedUser.failedLoginAttempts ?? 0}</strong>
+                      </div>
+
+                      <div>
+                        <small>Locked Until</small>
+                        <strong>
+                          {selectedUser.lockoutUntil
+                            ? new Date(selectedUser.lockoutUntil).toLocaleString("en-GB", {
+                                day: "2-digit",
+                                month: "short",
+                                year: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                                hour12: true,
+                              })
+                            : "—"}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {userError && (
                 <div className="form-error">
                   {userError}
@@ -1300,9 +1435,31 @@ export function UsersRolesPage() {
               )}
 
               <div className="admin-modal-actions">
+                {userForm.id && (
+                  <button
+                    type="button"
+                    className="danger-btn"
+                    disabled={
+                      userSaving ||
+                      userDeleting
+                    }
+                    onClick={deleteUser}
+                  >
+                    {userDeleting
+                      ? "Deleting..."
+                      : "Delete User"}
+                  </button>
+                )}
+
+                <span style={{ flex: 1 }} />
+
                 <button
                   type="button"
                   className="secondary-btn"
+                  disabled={
+                    userSaving ||
+                    userDeleting
+                  }
                   onClick={() =>
                     setUserModalOpen(
                       false
@@ -1316,7 +1473,8 @@ export function UsersRolesPage() {
                   type="submit"
                   className="primary-btn"
                   disabled={
-                    userSaving
+                    userSaving ||
+                    userDeleting
                   }
                 >
                   {userSaving

@@ -17,20 +17,10 @@ public sealed class OracleApInvoiceService(
 
     public async Task<OracleApProcessResult> ProcessInvoiceAsync(
         OracleApPortalInvoice invoice,
-        IReadOnlyList<OracleApDocument> documents,
         CancellationToken ct)
     {
         ValidateConfiguration();
 
-        // ========================================================
-        // ORACLE SOURCE
-        // ========================================================
-        //
-        // AP_INVOICES_INTERFACE.SOURCE
-        // and APXIIMPT source will both use:
-        //
-        // BUSINESS PARTNER PORTAL
-        //
         var source =
             Get(
                 "ORACLE_AP_SOURCE",
@@ -39,20 +29,12 @@ public sealed class OracleApInvoiceService(
             .Trim()
             .ToUpperInvariant();
 
-        // Batch name:
-        // BUSINESS PARTNER PORTAL - 09-SEP-2026
-        //
-        // Invoice date is used so retry keeps the same batch name.
         var batchName =
             $"BUSINESS PARTNER PORTAL - " +
             $"{invoice.InvoiceDate.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture)}";
 
         batchName =
             batchName.ToUpperInvariant();
-
-        // ========================================================
-        // IDEMPOTENCY CHECK
-        // ========================================================
 
         var existingInvoiceId =
             await RunOracleStepAsync(
@@ -66,15 +48,6 @@ public sealed class OracleApInvoiceService(
 
         if (existingInvoiceId.HasValue)
         {
-            await RunOracleStepAsync(
-                "PROCESS.ATTACH_DOCUMENTS_TO_EXISTING_INVOICE",
-                () => AttachDocumentsAsync(
-                    existingInvoiceId.Value,
-                    documents,
-                    ct
-                )
-            );
-
             return new OracleApProcessResult(
                 existingInvoiceId.Value,
                 null,
@@ -83,10 +56,6 @@ public sealed class OracleApInvoiceService(
                 Array.Empty<string>()
             );
         }
-
-        // ========================================================
-        // GET SUPPLIER / SITE / OU
-        // ========================================================
 
         var supplier =
             await RunOracleStepAsync(
@@ -131,10 +100,6 @@ public sealed class OracleApInvoiceService(
             );
         }
 
-        // ========================================================
-        // RESOLVE GRN -> RCV_TRANSACTION_ID
-        // ========================================================
-
         var receiptLines =
             await RunOracleStepAsync(
                 "PROCESS.RECEIPT_LINE_RESOLUTION",
@@ -165,10 +130,6 @@ public sealed class OracleApInvoiceService(
             receiptLines
         );
 
-        // ========================================================
-        // STAGE AP INTERFACE HEADER + LINES
-        // ========================================================
-
         var interfaceInvoiceId =
             await RunOracleStepAsync(
                 "PROCESS.STAGE_INVOICE",
@@ -182,10 +143,6 @@ public sealed class OracleApInvoiceService(
                 )
             );
 
-        // ========================================================
-        // RUN APXIIMPT
-        // ========================================================
-
         var requestId =
             await RunOracleStepAsync(
                 "PROCESS.APXIIMPT_SUBMIT",
@@ -196,10 +153,6 @@ public sealed class OracleApInvoiceService(
                 )
             );
 
-        // ========================================================
-        // WAIT FOR CONCURRENT PROGRAM
-        // ========================================================
-
         await RunOracleStepAsync(
             "PROCESS.APXIIMPT_WAIT",
             () => WaitForConcurrentRequestAsync(
@@ -207,10 +160,6 @@ public sealed class OracleApInvoiceService(
                 ct
             )
         );
-
-        // ========================================================
-        // CHECK AP_INTERFACE_REJECTIONS
-        // ========================================================
 
         var rejections =
             await RunOracleStepAsync(
@@ -227,10 +176,6 @@ public sealed class OracleApInvoiceService(
                 rejections
             );
         }
-
-        // ========================================================
-        // VERIFY AP_INVOICES_ALL
-        // ========================================================
 
         var importedInvoiceId =
             await RunOracleStepAsync(
@@ -249,19 +194,6 @@ public sealed class OracleApInvoiceService(
                 "but the invoice was not found in AP_INVOICES_ALL."
             );
         }
-
-        // ========================================================
-        // ATTACH DOCUMENTS
-        // ========================================================
-
-        await RunOracleStepAsync(
-            "PROCESS.ATTACH_DOCUMENTS",
-            () => AttachDocumentsAsync(
-                importedInvoiceId.Value,
-                documents,
-                ct
-            )
-        );
 
         return new OracleApProcessResult(
             importedInvoiceId.Value,
@@ -330,10 +262,6 @@ public sealed class OracleApInvoiceService(
                             ct
                         )
                 );
-
-            // ====================================================
-            // HEADER
-            // ====================================================
 
             await using (
                 var command =
@@ -404,177 +332,89 @@ public sealed class OracleApInvoiceService(
                     )
                     """;
 
-                Add(
-                    command,
-                    "invoice_id",
-                    OracleDbType.Int64,
-                    invoiceId
-                );
-
-                Add(
-                    command,
-                    "invoice_num",
-                    OracleDbType.Varchar2,
-                    invoice.InvoiceNumber
-                );
-
-                Add(
-                    command,
-                    "vendor_id",
-                    OracleDbType.Decimal,
-                    invoice.VendorId
-                );
-
-                Add(
-                    command,
-                    "vendor_site_id",
-                    OracleDbType.Int64,
-                    vendorSiteId
-                );
-
-                Add(
-                    command,
-                    "invoice_amount",
-                    OracleDbType.Decimal,
-                    invoice.InvoiceAmount
-                );
+                Add(command, "invoice_id", OracleDbType.Int64, invoiceId);
+                Add(command, "invoice_num", OracleDbType.Varchar2, invoice.InvoiceNumber);
+                Add(command, "vendor_id", OracleDbType.Decimal, invoice.VendorId);
+                Add(command, "vendor_site_id", OracleDbType.Int64, vendorSiteId);
+                Add(command, "invoice_amount", OracleDbType.Decimal, invoice.InvoiceAmount);
 
                 Add(
                     command,
                     "invoice_date",
                     OracleDbType.Date,
-                    invoice.InvoiceDate
-                        .ToDateTime(
-                            TimeOnly.MinValue
-                        )
+                    invoice.InvoiceDate.ToDateTime(TimeOnly.MinValue)
                 );
 
-                Add(
-                    command,
-                    "currency_code",
-                    OracleDbType.Varchar2,
-                    invoice.CurrencyCode
-                );
+                Add(command, "currency_code", OracleDbType.Varchar2, invoice.CurrencyCode);
 
                 Add(
                     command,
                     "terms_id",
                     OracleDbType.Int64,
-                    GetOptionalLong(
-                        "ORACLE_AP_TERMS_ID"
-                    )
+                    GetOptionalLong("ORACLE_AP_TERMS_ID")
                 );
 
                 Add(
                     command,
                     "payment_method",
                     OracleDbType.Varchar2,
-                    DbValue(
-                        config[
-                            "ORACLE_AP_PAYMENT_METHOD_LOOKUP_CODE"
-                        ]
-                    )
+                    DbValue(config["ORACLE_AP_PAYMENT_METHOD_LOOKUP_CODE"])
                 );
 
                 Add(
                     command,
                     "gl_date",
                     OracleDbType.Date,
-                    invoice.InvoiceDate
-                        .ToDateTime(
-                            TimeOnly.MinValue
-                        )
+                    invoice.InvoiceDate.ToDateTime(TimeOnly.MinValue)
                 );
 
-                Add(
-                    command,
-                    "org_id",
-                    OracleDbType.Int64,
-                    orgId
-                );
-
-                // ====================================================
-                // SOURCE = BUSINESS PARTNER PORTAL
-                // ====================================================
-
-                Add(
-                    command,
-                    "source",
-                    OracleDbType.Varchar2,
-                    source
-                );
-
-                // ====================================================
-                // PORTAL PK_ID -> ORACLE ATTRIBUTE10
-                // ====================================================
-
-                Add(
-                    command,
-                    "pk_id",
-                    OracleDbType.Int64,
-                    invoice.PkId
-                );
+                Add(command, "org_id", OracleDbType.Int64, orgId);
+                Add(command, "source", OracleDbType.Varchar2, source);
+                Add(command, "pk_id", OracleDbType.Int64, invoice.PkId);
 
                 Add(
                     command,
                     "invoice_type",
                     OracleDbType.Varchar2,
-                    MapInvoiceType(
-                        invoice.InvoiceType
-                    )
+                    MapInvoiceType(invoice.InvoiceType)
                 );
 
                 Add(
                     command,
                     "description",
                     OracleDbType.Varchar2,
-                    DbValue(
-                        invoice.Description
-                    )
+                    DbValue(invoice.Description)
                 );
 
                 Add(
                     command,
                     "created_by",
                     OracleDbType.Int64,
-                    GetLong(
-                        "ORACLE_APPS_USER_ID"
-                    )
+                    GetLong("ORACLE_APPS_USER_ID")
                 );
 
                 Add(
                     command,
                     "updated_by",
                     OracleDbType.Int64,
-                    GetLong(
-                        "ORACLE_APPS_USER_ID"
-                    )
+                    GetLong("ORACLE_APPS_USER_ID")
                 );
 
                 Add(
                     command,
                     "last_update_login",
                     OracleDbType.Int64,
-                    GetLong(
-                        "ORACLE_APPS_USER_ID"
-                    )
+                    GetLong("ORACLE_APPS_USER_ID")
                 );
 
                 await RunOracleStepAsync(
                     "STAGE.HEADER_INTERFACE_INSERT",
                     async () =>
                     {
-                        await command
-                            .ExecuteNonQueryAsync(
-                                ct
-                            );
+                        await command.ExecuteNonQueryAsync(ct);
                     }
                 );
             }
-
-            // ====================================================
-            // LINES
-            // ====================================================
 
             var lineNumber = 1;
 
@@ -659,68 +499,15 @@ public sealed class OracleApInvoiceService(
                     )
                     """;
 
-                Add(
-                    lineCommand,
-                    "invoice_id",
-                    OracleDbType.Int64,
-                    invoiceId
-                );
-
-                Add(
-                    lineCommand,
-                    "invoice_line_id",
-                    OracleDbType.Int64,
-                    lineId
-                );
-
-                Add(
-                    lineCommand,
-                    "line_number",
-                    OracleDbType.Int32,
-                    lineNumber++
-                );
-
-                Add(
-                    lineCommand,
-                    "amount",
-                    OracleDbType.Decimal,
-                    line.ExtendedAmount
-                );
-
-                Add(
-                    lineCommand,
-                    "po_number",
-                    OracleDbType.Varchar2,
-                    line.PoNumber
-                );
-
-                Add(
-                    lineCommand,
-                    "po_header_id",
-                    OracleDbType.Int64,
-                    line.PoHeaderId
-                );
-
-                Add(
-                    lineCommand,
-                    "po_line_number",
-                    OracleDbType.Int32,
-                    line.PoLineNumber
-                );
-
-                Add(
-                    lineCommand,
-                    "po_line_id",
-                    OracleDbType.Int64,
-                    line.PoLineId
-                );
-
-                Add(
-                    lineCommand,
-                    "po_line_location_id",
-                    OracleDbType.Int64,
-                    line.PoLineLocationId
-                );
+                Add(lineCommand, "invoice_id", OracleDbType.Int64, invoiceId);
+                Add(lineCommand, "invoice_line_id", OracleDbType.Int64, lineId);
+                Add(lineCommand, "line_number", OracleDbType.Int32, lineNumber++);
+                Add(lineCommand, "amount", OracleDbType.Decimal, line.ExtendedAmount);
+                Add(lineCommand, "po_number", OracleDbType.Varchar2, line.PoNumber);
+                Add(lineCommand, "po_header_id", OracleDbType.Int64, line.PoHeaderId);
+                Add(lineCommand, "po_line_number", OracleDbType.Int32, line.PoLineNumber);
+                Add(lineCommand, "po_line_id", OracleDbType.Int64, line.PoLineId);
+                Add(lineCommand, "po_line_location_id", OracleDbType.Int64, line.PoLineLocationId);
 
                 Add(
                     lineCommand,
@@ -731,109 +518,44 @@ public sealed class OracleApInvoiceService(
                         : DBNull.Value
                 );
 
-                Add(
-                    lineCommand,
-                    "receipt_number",
-                    OracleDbType.Varchar2,
-                    line.GrnNumber
-                );
-
-                Add(
-                    lineCommand,
-                    "rcv_transaction_id",
-                    OracleDbType.Int64,
-                    line.RcvTransactionId
-                );
-
-                Add(
-                    lineCommand,
-                    "quantity_invoiced",
-                    OracleDbType.Decimal,
-                    line.AvailableQuantity
-                );
-
-                Add(
-                    lineCommand,
-                    "unit_price",
-                    OracleDbType.Decimal,
-                    line.UnitPrice
-                );
+                Add(lineCommand, "receipt_number", OracleDbType.Varchar2, line.GrnNumber);
+                Add(lineCommand, "rcv_transaction_id", OracleDbType.Int64, line.RcvTransactionId);
+                Add(lineCommand, "quantity_invoiced", OracleDbType.Decimal, line.AvailableQuantity);
+                Add(lineCommand, "unit_price", OracleDbType.Decimal, line.UnitPrice);
 
                 Add(
                     lineCommand,
                     "description",
                     OracleDbType.Varchar2,
-                    DbValue(
-                        invoice.Description
-                    )
+                    DbValue(invoice.Description)
                 );
 
                 Add(
                     lineCommand,
                     "accounting_date",
                     OracleDbType.Date,
-                    invoice.InvoiceDate
-                        .ToDateTime(
-                            TimeOnly.MinValue
-                        )
+                    invoice.InvoiceDate.ToDateTime(TimeOnly.MinValue)
                 );
 
-                Add(
-                    lineCommand,
-                    "org_id",
-                    OracleDbType.Int64,
-                    orgId
-                );
-
-                Add(
-                    lineCommand,
-                    "created_by",
-                    OracleDbType.Int64,
-                    GetLong(
-                        "ORACLE_APPS_USER_ID"
-                    )
-                );
-
-                Add(
-                    lineCommand,
-                    "updated_by",
-                    OracleDbType.Int64,
-                    GetLong(
-                        "ORACLE_APPS_USER_ID"
-                    )
-                );
-
-                Add(
-                    lineCommand,
-                    "last_update_login",
-                    OracleDbType.Int64,
-                    GetLong(
-                        "ORACLE_APPS_USER_ID"
-                    )
-                );
+                Add(lineCommand, "org_id", OracleDbType.Int64, orgId);
+                Add(lineCommand, "created_by", OracleDbType.Int64, GetLong("ORACLE_APPS_USER_ID"));
+                Add(lineCommand, "updated_by", OracleDbType.Int64, GetLong("ORACLE_APPS_USER_ID"));
+                Add(lineCommand, "last_update_login", OracleDbType.Int64, GetLong("ORACLE_APPS_USER_ID"));
 
                 await RunOracleStepAsync(
                     $"STAGE.LINE_INTERFACE_INSERT.RCV={line.RcvTransactionId}",
                     async () =>
                     {
-                        await lineCommand
-                            .ExecuteNonQueryAsync(
-                                ct
-                            );
+                        await lineCommand.ExecuteNonQueryAsync(ct);
                     }
                 );
             }
-
-            // ====================================================
-            // COMMIT
-            // ====================================================
 
             await RunOracleStepAsync(
                 "STAGE.TRANSACTION_COMMIT",
                 () =>
                 {
                     transaction.Commit();
-
                     return Task.CompletedTask;
                 }
             );
@@ -853,7 +575,6 @@ public sealed class OracleApInvoiceService(
         catch
         {
             transaction.Rollback();
-
             throw;
         }
     }
@@ -927,9 +648,30 @@ public sealed class OracleApInvoiceService(
             );
         }
 
+        /*
+         * IMPORTANT COLUMN ORDER
+         *
+         *  0  transaction_id
+         *  1  receipt_num
+         *  2  po_header_id
+         *  3  po_number
+         *  4  po_line_id
+         *  5  po_line_number
+         *  6  po_line_location_id
+         *  7  po_distribution_id
+         *  8  shipment_line_id
+         *  9  item_id
+         * 10  item_description
+         * 11  received_quantity
+         * 12  available_quantity
+         * 13  unit_price
+         * 14  match_option
+         *
+         * Reader mapping below MUST follow this exact order.
+         */
         command.CommandText =
             $"""
-            SELECT
+            SELECT DISTINCT
                 rt.transaction_id,
                 rsh.receipt_num,
                 pha.po_header_id,
@@ -938,6 +680,9 @@ public sealed class OracleApInvoiceService(
                 pol.line_num AS po_line_number,
                 pll.line_location_id AS po_line_location_id,
                 rt.po_distribution_id,
+                rsl.shipment_line_id,
+                rsl.item_id,
+                rsl.item_description,
 
                 NVL(
                     rt.quantity,
@@ -1029,10 +774,13 @@ public sealed class OracleApInvoiceService(
                 :vendor_id
 
             AND
-                INSTR(
-                    ',' || :po_number || ',',
-                    ',' || pha.segment1 || ','
-                ) > 0
+                TRIM(
+                    pha.segment1
+                )
+                =
+                TRIM(
+                    :po_number
+                )
 
             AND
                 rsh.receipt_num IN
@@ -1046,6 +794,10 @@ public sealed class OracleApInvoiceService(
             AND
                 rt.transaction_type =
                 'RECEIVE'
+
+            AND
+                rt.transaction_date >=
+                :fiscal_window_start
 
             ORDER BY
                 rsh.receipt_num,
@@ -1064,117 +816,196 @@ public sealed class OracleApInvoiceService(
             command,
             "po_number",
             OracleDbType.Varchar2,
-            poNumber
+            poNumber.Trim()
         );
 
+        Add(
+            command,
+            "fiscal_window_start",
+            OracleDbType.Date,
+            PakistanFiscalWindow.Start()
+        );
+
+        /*
+         * Keep one record per RCV transaction.
+         * RCV_TRANSACTION_ID is required later for AP receipt matching.
+         */
         var result =
-            new List<OracleReceiptLine>();
+            new Dictionary<long, OracleReceiptLine>();
 
         await using var reader =
-            await command
-                .ExecuteReaderAsync(
-                    ct
-                );
+            await command.ExecuteReaderAsync(ct);
 
         while (
-            await reader.ReadAsync(
-                ct
-            )
+            await reader.ReadAsync(ct)
         )
         {
+            /*
+             * FIX:
+             *
+             * Previous code was reading columns 2-10 using incorrect
+             * ordinals.
+             *
+             * Example:
+             *
+             * SELECT ordinal 4 = PO_LINE_ID
+             *
+             * but old code was reading ordinal 7 as PO_LINE_ID.
+             *
+             * Ordinal 7 is actually PO_DISTRIBUTION_ID.
+             *
+             * That caused:
+             *
+             * "Oracle receipt resolution returned NULL for required
+             *  field PO_LINES_ALL.PO_LINE_ID."
+             */
+            var rcvTransactionId =
+                ReadRequiredInt64(
+                    reader,
+                    0,
+                    "RCV_TRANSACTIONS.TRANSACTION_ID"
+                );
+
+            var grnNumber =
+                Convert.ToString(
+                    reader.GetValue(1)
+                )
+                ?? string.Empty;
+
+            var poHeaderId =
+                ReadRequiredInt64(
+                    reader,
+                    2,
+                    "PO_HEADERS_ALL.PO_HEADER_ID"
+                );
+
+            var resolvedPoNumber =
+                Convert.ToString(
+                    reader.GetValue(3)
+                )
+                ?? string.Empty;
+
+            var poLineId =
+                ReadRequiredInt64(
+                    reader,
+                    4,
+                    "PO_LINES_ALL.PO_LINE_ID"
+                );
+
+            var poLineNumber =
+                ReadRequiredInt32(
+                    reader,
+                    5,
+                    "PO_LINES_ALL.LINE_NUM"
+                );
+
+            var poLineLocationId =
+                ReadRequiredInt64(
+                    reader,
+                    6,
+                    "PO_LINE_LOCATIONS_ALL.LINE_LOCATION_ID"
+                );
+
+            long? poDistributionId =
+                reader.IsDBNull(7)
+                    ? null
+                    : Convert.ToInt64(
+                        reader.GetValue(7)
+                    );
+
+            var shipmentLineId =
+                ReadRequiredInt64(
+                    reader,
+                    8,
+                    "RCV_SHIPMENT_LINES.SHIPMENT_LINE_ID"
+                );
+
+            long? itemId =
+                reader.IsDBNull(9)
+                    ? null
+                    : Convert.ToInt64(
+                        reader.GetValue(9)
+                    );
+
+            var itemDescription =
+                reader.IsDBNull(10)
+                    ? null
+                    : Convert.ToString(
+                        reader.GetValue(10)
+                    );
+
+            var receivedQuantity =
+                ReadRequiredDecimal(
+                    reader,
+                    11,
+                    "RECEIVED_QUANTITY"
+                );
+
+            var availableQuantity =
+                ReadRequiredDecimal(
+                    reader,
+                    12,
+                    "AVAILABLE_QUANTITY"
+                );
+
+            var unitPrice =
+                ReadRequiredDecimal(
+                    reader,
+                    13,
+                    "UNIT_PRICE"
+                );
+
+            var matchOption =
+                reader.IsDBNull(14)
+                    ? "P"
+                    : Convert.ToString(
+                        reader.GetValue(14)
+                    )
+                    ?? "P";
+
             var line =
                 new OracleReceiptLine(
-                    ReadRequiredInt64(
-                        reader,
-                        0,
-                        "RCV_TRANSACTIONS.TRANSACTION_ID"
-                    ),
-
-                    Convert.ToString(
-                        reader.GetValue(1)
-                    )
-                    ?? string.Empty,
-
-                    ReadRequiredInt64(
-                        reader,
-                        2,
-                        "PO_HEADERS_ALL.PO_HEADER_ID"
-                    ),
-
-                    Convert.ToString(
-                        reader.GetValue(3)
-                    )
-                    ?? string.Empty,
-
-                    ReadRequiredInt64(
-                        reader,
-                        4,
-                        "PO_LINES_ALL.PO_LINE_ID"
-                    ),
-
-                    ReadRequiredInt32(
-                        reader,
-                        5,
-                        "PO_LINES_ALL.LINE_NUM"
-                    ),
-
-                    ReadRequiredInt64(
-                        reader,
-                        6,
-                        "PO_LINE_LOCATIONS_ALL.LINE_LOCATION_ID"
-                    ),
-
-                    reader.IsDBNull(7)
-                        ? null
-                        : Convert.ToInt64(
-                            reader.GetValue(7)
-                        ),
-
-                    ReadRequiredDecimal(
-                        reader,
-                        8,
-                        "RECEIVED_QUANTITY"
-                    ),
-
-                    ReadRequiredDecimal(
-                        reader,
-                        9,
-                        "AVAILABLE_QUANTITY"
-                    ),
-
-                    ReadRequiredDecimal(
-                        reader,
-                        10,
-                        "UNIT_PRICE"
-                    ),
-
-                    Convert.ToString(
-                        reader.GetValue(11)
-                    )
-                    ?? "P"
+                    rcvTransactionId,
+                    grnNumber,
+                    shipmentLineId,
+                    itemId,
+                    itemDescription,
+                    poHeaderId,
+                    resolvedPoNumber,
+                    poLineId,
+                    poLineNumber,
+                    poLineLocationId,
+                    poDistributionId,
+                    receivedQuantity,
+                    availableQuantity,
+                    unitPrice,
+                    matchOption
                 );
 
             if (
-                line.AvailableQuantity >
-                0
+                line.AvailableQuantity > 0
+                &&
+                !result.ContainsKey(
+                    line.RcvTransactionId
+                )
             )
             {
                 result.Add(
+                    line.RcvTransactionId,
                     line
                 );
             }
         }
 
-        return result
-            .GroupBy(
-                x =>
-                    x.RcvTransactionId
-            )
-            .Select(
-                x =>
-                    x.First()
-            )
-            .ToList();
+        logger.LogInformation(
+            "Resolved {Count} eligible Oracle receipt line(s). VendorId={VendorId}, PO={PoNumber}, GRNs={Grns}",
+            result.Count,
+            vendorId,
+            poNumber,
+            string.Join(", ", grnNumbers)
+        );
+
+        return result.Values.ToList();
     }
 
     // ============================================================
@@ -1241,40 +1072,22 @@ public sealed class OracleApInvoiceService(
             );
         }
 
-        var multiLineGrns =
-            lines
-                .GroupBy(
-                    x =>
-                        x.GrnNumber,
-                    StringComparer.OrdinalIgnoreCase
-                )
-                .Where(
-                    group =>
-                        group.Count() >
-                        1
-                )
-                .Select(
-                    group =>
-                        group.Key
-                )
-                .ToList();
-
-        if (
-            multiLineGrns.Count > 0
-        )
-        {
-            throw new OracleApBusinessException(
-                $"GRN(s) {string.Join(", ", multiLineGrns)} contain multiple receipt lines. " +
-                "The portal must capture the specific GRN line before Oracle submission, " +
-                "as required by the AP interface specification."
-            );
-        }
+        /*
+         * Multiple receipt lines under the same GRN are valid when the
+         * portal has explicitly captured the selected RCV_TRANSACTION_ID
+         * values. ProcessInvoiceAsync filters the resolved Oracle lines by
+         * invoice.RcvTransactionIds before this validation runs, so the
+         * collection here already represents only the vendor-selected lines.
+         *
+         * Do not reject a GRN merely because more than one selected receipt
+         * line belongs to it. The old validation caused valid multi-line GRNs
+         * to fail before APXIIMPT was even submitted.
+         */
 
         if (
             lines.Any(
                 x =>
-                    x.UnitPrice <=
-                    0
+                    x.UnitPrice <= 0
             )
         )
         {
@@ -1359,16 +1172,9 @@ public sealed class OracleApInvoiceService(
                         sub_request => FALSE,
 
                         argument1   => NULL,
-
-                        -- Source:
-                        -- BUSINESS PARTNER PORTAL
                         argument2   => :source,
-
                         argument3   => NULL,
-
-                        -- Batch Name
                         argument4   => :batch_name,
-
                         argument5   => NULL,
                         argument6   => NULL,
                         argument7   => NULL,
@@ -1404,10 +1210,6 @@ public sealed class OracleApInvoiceService(
             requestIdParameter
         );
 
-        // ========================================================
-        // SOURCE = BUSINESS PARTNER PORTAL
-        // ========================================================
-
         Add(
             command,
             "source",
@@ -1416,10 +1218,6 @@ public sealed class OracleApInvoiceService(
                 .Trim()
                 .ToUpperInvariant()
         );
-
-        // ========================================================
-        // BATCH
-        // ========================================================
 
         Add(
             command,
@@ -1432,10 +1230,7 @@ public sealed class OracleApInvoiceService(
 
         await RunOracleStepAsync(
             "APXIIMPT.SUBMIT_REQUEST",
-            () => command
-                .ExecuteNonQueryAsync(
-                    ct
-                )
+            () => command.ExecuteNonQueryAsync(ct)
         );
 
         var raw =
@@ -1535,15 +1330,10 @@ public sealed class OracleApInvoiceService(
             );
 
             await using var reader =
-                await command
-                    .ExecuteReaderAsync(
-                        ct
-                    );
+                await command.ExecuteReaderAsync(ct);
 
             if (
-                await reader.ReadAsync(
-                    ct
-                )
+                await reader.ReadAsync(ct)
             )
             {
                 var phase =
@@ -1661,15 +1451,10 @@ public sealed class OracleApInvoiceService(
             new List<string>();
 
         await using var reader =
-            await command
-                .ExecuteReaderAsync(
-                    ct
-                );
+            await command.ExecuteReaderAsync(ct);
 
         while (
-            await reader.ReadAsync(
-                ct
-            )
+            await reader.ReadAsync(ct)
         )
         {
             result.Add(
@@ -1751,10 +1536,7 @@ public sealed class OracleApInvoiceService(
         );
 
         var result =
-            await command
-                .ExecuteScalarAsync(
-                    ct
-                );
+            await command.ExecuteScalarAsync(ct);
 
         if (
             result is null ||
@@ -1774,7 +1556,7 @@ public sealed class OracleApInvoiceService(
     // FND ATTACHMENTS
     // ============================================================
 
-    private async Task AttachDocumentsAsync(
+    public async Task AttachDocumentsToInvoiceAsync(
         long oracleInvoiceId,
         IReadOnlyList<OracleApDocument> documents,
         CancellationToken ct)
@@ -1845,6 +1627,16 @@ public sealed class OracleApInvoiceService(
                     continue;
                 }
 
+                logger.LogInformation(
+                    "Creating Oracle AP invoice attachment. " +
+                    "OracleInvoiceId={OracleInvoiceId}, FileName={FileName}, " +
+                    "DocumentType={DocumentType}, RequestedCategoryName={RequestedCategoryName}",
+                    oracleInvoiceId,
+                    document.FileName,
+                    document.DocumentType,
+                    category
+                );
+
                 await AttachSingleFileAsync(
                     connection,
                     transaction,
@@ -1860,7 +1652,6 @@ public sealed class OracleApInvoiceService(
         catch
         {
             transaction.Rollback();
-
             throw;
         }
     }
@@ -1925,12 +1716,30 @@ public sealed class OracleApInvoiceService(
                 )
 
             AND
-                UPPER(
-                    fdc.name
-                )
-                =
-                UPPER(
-                    :category_name
+                (
+                    UPPER(
+                        TRIM(
+                            fdc.name
+                        )
+                    )
+                    =
+                    UPPER(
+                        TRIM(
+                            :category_name
+                        )
+                    )
+                OR
+                    UPPER(
+                        TRIM(
+                            fdc.user_name
+                        )
+                    )
+                    =
+                    UPPER(
+                        TRIM(
+                            :category_name
+                        )
+                    )
                 )
 
             AND
@@ -1963,10 +1772,7 @@ public sealed class OracleApInvoiceService(
 
         return
             Convert.ToInt32(
-                await command
-                    .ExecuteScalarAsync(
-                        ct
-                    )
+                await command.ExecuteScalarAsync(ct)
             )
             >
             0;
@@ -1980,6 +1786,12 @@ public sealed class OracleApInvoiceService(
         string categoryName,
         CancellationToken ct)
     {
+        var fileFormat =
+            Get(
+                "ORACLE_AP_ATTACHMENT_FILE_FORMAT",
+                "binary"
+            );
+
         await using var command =
             connection.CreateCommand();
 
@@ -1992,41 +1804,38 @@ public sealed class OracleApInvoiceService(
         command.CommandText =
             """
             DECLARE
-
-                l_media_id
-                    NUMBER;
-
-                l_doc_id
-                    NUMBER;
-
-                l_category_id
-                    NUMBER;
-
-                l_seq_num
-                    NUMBER;
+                l_media_id NUMBER;
+                l_doc_id NUMBER;
+                l_category_id NUMBER;
+                l_seq_num NUMBER;
 
             BEGIN
+                BEGIN
+                    SELECT
+                        category_id
+                    INTO
+                        l_category_id
+                    FROM
+                        fnd_document_categories_vl
+                    WHERE
+                        (
+                            UPPER(TRIM(name)) =
+                            UPPER(TRIM(:p_category_name))
+                        OR
+                            UPPER(TRIM(user_name)) =
+                            UPPER(TRIM(:p_category_name))
+                        )
+                    AND
+                        ROWNUM = 1;
 
-                SELECT
-                    category_id
-
-                INTO
-                    l_category_id
-
-                FROM
-                    fnd_document_categories_vl
-
-                WHERE
-                    UPPER(
-                        name
-                    )
-                    =
-                    UPPER(
-                        :p_category_name
-                    )
-
-                AND
-                    ROWNUM = 1;
+                EXCEPTION
+                    WHEN NO_DATA_FOUND THEN
+                        RAISE_APPLICATION_ERROR(
+                            -20001,
+                            'Attachment category not found in Oracle: ' ||
+                            :p_category_name
+                        );
+                END;
 
                 l_media_id :=
                     fnd_lobs_s.NEXTVAL;
@@ -2036,6 +1845,7 @@ public sealed class OracleApInvoiceService(
                     file_id,
                     file_name,
                     file_content_type,
+                    file_format,
                     file_data,
                     upload_date,
                     expiration_date,
@@ -2047,6 +1857,7 @@ public sealed class OracleApInvoiceService(
                     l_media_id,
                     :p_file_name,
                     :p_content_type,
+                    :p_file_format,
                     :p_blob_data,
                     SYSDATE,
                     NULL,
@@ -2102,13 +1913,10 @@ public sealed class OracleApInvoiceService(
                     last_updated_by,
                     last_update_login
                 )
-
                 SELECT
                     l_doc_id,
                     l.language_code,
-                    USERENV(
-                        'LANG'
-                    ),
+                    USERENV('LANG'),
                     :p_description,
                     :p_file_name,
                     l_media_id,
@@ -2117,43 +1925,21 @@ public sealed class OracleApInvoiceService(
                     SYSDATE,
                     fnd_global.user_id,
                     fnd_global.login_id
-
                 FROM
                     fnd_languages l
-
                 WHERE
-                    l.installed_flag
-                    IN
-                    (
-                        'B',
-                        'I'
-                    );
+                    l.installed_flag IN ('B', 'I');
 
                 SELECT
-                    NVL(
-                        MAX(
-                            seq_num
-                        ),
-                        0
-                    )
-                    +
-                    1
-
+                    NVL(MAX(seq_num), 0) + 1
                 INTO
                     l_seq_num
-
                 FROM
                     fnd_attached_documents
-
                 WHERE
-                    entity_name =
-                    'AP_INVOICES'
-
+                    entity_name = 'AP_INVOICES'
                 AND
-                    pk1_value =
-                    TO_CHAR(
-                        :p_invoice_id
-                    );
+                    pk1_value = TO_CHAR(:p_invoice_id);
 
                 INSERT INTO fnd_attached_documents
                 (
@@ -2163,6 +1949,7 @@ public sealed class OracleApInvoiceService(
                     pk1_value,
                     category_id,
                     seq_num,
+                    automatically_added_flag,
                     creation_date,
                     created_by,
                     last_update_date,
@@ -2174,11 +1961,10 @@ public sealed class OracleApInvoiceService(
                     fnd_attached_documents_s.NEXTVAL,
                     l_doc_id,
                     'AP_INVOICES',
-                    TO_CHAR(
-                        :p_invoice_id
-                    ),
+                    TO_CHAR(:p_invoice_id),
                     l_category_id,
                     l_seq_num,
+                    'N',
                     SYSDATE,
                     fnd_global.user_id,
                     SYSDATE,
@@ -2189,57 +1975,34 @@ public sealed class OracleApInvoiceService(
             END;
             """;
 
-        Add(
-            command,
-            "p_category_name",
-            OracleDbType.Varchar2,
-            categoryName
-        );
-
-        Add(
-            command,
-            "p_file_name",
-            OracleDbType.Varchar2,
-            document.FileName
-        );
-
-        Add(
-            command,
-            "p_content_type",
-            OracleDbType.Varchar2,
-            document.ContentType
-        );
-
-        Add(
-            command,
-            "p_blob_data",
-            OracleDbType.Blob,
-            document.Content
-        );
+        Add(command, "p_category_name", OracleDbType.Varchar2, categoryName);
+        Add(command, "p_file_name", OracleDbType.Varchar2, document.FileName);
+        Add(command, "p_content_type", OracleDbType.Varchar2, document.ContentType);
+        Add(command, "p_file_format", OracleDbType.Varchar2, fileFormat);
+        Add(command, "p_blob_data", OracleDbType.Blob, document.Content);
 
         Add(
             command,
             "p_description",
             OracleDbType.Varchar2,
-            document.DocumentType ==
-            "INVOICE"
-                ?
-                "Business Portal Invoice Copy"
-                :
-                "Business Portal Receipted Delivery Challan"
+            document.DocumentType == "INVOICE"
+                ? "Business Portal Invoice Copy"
+                : "Business Portal Receipted Delivery Challan"
         );
 
-        Add(
-            command,
-            "p_invoice_id",
-            OracleDbType.Int64,
-            oracleInvoiceId
+        Add(command, "p_invoice_id", OracleDbType.Int64, oracleInvoiceId);
+
+        logger.LogInformation(
+            "Inserting Oracle FND_LOBS attachment. " +
+            "OracleInvoiceId={OracleInvoiceId}, FileName={FileName}, " +
+            "ContentType={ContentType}, FileFormat={FileFormat}",
+            oracleInvoiceId,
+            document.FileName,
+            document.ContentType,
+            fileFormat
         );
 
-        await command
-            .ExecuteNonQueryAsync(
-                ct
-            );
+        await command.ExecuteNonQueryAsync(ct);
     }
 
     // ============================================================
@@ -2275,67 +2038,24 @@ public sealed class OracleApInvoiceService(
                     (
                         SELECT
                             invoice_id
-
                         FROM
                             ap_invoices_interface
-
                         WHERE
-                            vendor_id =
-                            :vendor_id
-
+                            vendor_id = :vendor_id
                         AND
-                            UPPER(
-                                TRIM(
-                                    invoice_num
-                                )
-                            )
-                            =
-                            UPPER(
-                                TRIM(
-                                    :invoice_num
-                                )
-                            )
-
+                            UPPER(TRIM(invoice_num)) =
+                            UPPER(TRIM(:invoice_num))
                         AND
-                            UPPER(
-                                TRIM(
-                                    source
-                                )
-                            )
-                            =
-                            UPPER(
-                                TRIM(
-                                    :source
-                                )
-                            )
+                            UPPER(TRIM(source)) =
+                            UPPER(TRIM(:source))
                     )
                 """;
 
-            Add(
-                lineCommand,
-                "vendor_id",
-                OracleDbType.Decimal,
-                vendorId
-            );
+            Add(lineCommand, "vendor_id", OracleDbType.Decimal, vendorId);
+            Add(lineCommand, "invoice_num", OracleDbType.Varchar2, invoiceNumber);
+            Add(lineCommand, "source", OracleDbType.Varchar2, source);
 
-            Add(
-                lineCommand,
-                "invoice_num",
-                OracleDbType.Varchar2,
-                invoiceNumber
-            );
-
-            Add(
-                lineCommand,
-                "source",
-                OracleDbType.Varchar2,
-                source
-            );
-
-            await lineCommand
-                .ExecuteNonQueryAsync(
-                    ct
-                );
+            await lineCommand.ExecuteNonQueryAsync(ct);
         }
 
         await using (
@@ -2353,63 +2073,21 @@ public sealed class OracleApInvoiceService(
                 """
                 DELETE FROM
                     ap_invoices_interface
-
                 WHERE
-                    vendor_id =
-                    :vendor_id
-
+                    vendor_id = :vendor_id
                 AND
-                    UPPER(
-                        TRIM(
-                            invoice_num
-                        )
-                    )
-                    =
-                    UPPER(
-                        TRIM(
-                            :invoice_num
-                        )
-                    )
-
+                    UPPER(TRIM(invoice_num)) =
+                    UPPER(TRIM(:invoice_num))
                 AND
-                    UPPER(
-                        TRIM(
-                            source
-                        )
-                    )
-                    =
-                    UPPER(
-                        TRIM(
-                            :source
-                        )
-                    )
+                    UPPER(TRIM(source)) =
+                    UPPER(TRIM(:source))
                 """;
 
-            Add(
-                headerCommand,
-                "vendor_id",
-                OracleDbType.Decimal,
-                vendorId
-            );
+            Add(headerCommand, "vendor_id", OracleDbType.Decimal, vendorId);
+            Add(headerCommand, "invoice_num", OracleDbType.Varchar2, invoiceNumber);
+            Add(headerCommand, "source", OracleDbType.Varchar2, source);
 
-            Add(
-                headerCommand,
-                "invoice_num",
-                OracleDbType.Varchar2,
-                invoiceNumber
-            );
-
-            Add(
-                headerCommand,
-                "source",
-                OracleDbType.Varchar2,
-                source
-            );
-
-            await headerCommand
-                .ExecuteNonQueryAsync(
-                    ct
-                );
+            await headerCommand.ExecuteNonQueryAsync(ct);
         }
     }
 
@@ -2434,14 +2112,12 @@ public sealed class OracleApInvoiceService(
         command.CommandText =
             """
             BEGIN
-
                 fnd_global.apps_initialize
                 (
                     :user_id,
                     :resp_id,
                     :resp_appl_id
                 );
-
             END;
             """;
 
@@ -2449,33 +2125,24 @@ public sealed class OracleApInvoiceService(
             command,
             "user_id",
             OracleDbType.Int64,
-            GetLong(
-                "ORACLE_APPS_USER_ID"
-            )
+            GetLong("ORACLE_APPS_USER_ID")
         );
 
         Add(
             command,
             "resp_id",
             OracleDbType.Int64,
-            GetLong(
-                "ORACLE_APPS_RESP_ID"
-            )
+            GetLong("ORACLE_APPS_RESP_ID")
         );
 
         Add(
             command,
             "resp_appl_id",
             OracleDbType.Int64,
-            GetLong(
-                "ORACLE_APPS_RESP_APPL_ID"
-            )
+            GetLong("ORACLE_APPS_RESP_APPL_ID")
         );
 
-        await command
-            .ExecuteNonQueryAsync(
-                ct
-            );
+        await command.ExecuteNonQueryAsync(ct);
     }
 
     // ============================================================
@@ -2511,10 +2178,7 @@ public sealed class OracleApInvoiceService(
             $"SELECT {sequence}.NEXTVAL FROM DUAL";
 
         var result =
-            await command
-                .ExecuteScalarAsync(
-                    ct
-                );
+            await command.ExecuteScalarAsync(ct);
 
         return Convert.ToInt64(
             result
@@ -2546,9 +2210,7 @@ public sealed class OracleApInvoiceService(
         catch (OracleException ex)
         {
             var message =
-                CleanOracleMessage(
-                    ex
-                );
+                CleanOracleMessage(ex);
 
             logger.LogError(
                 ex,
@@ -2591,9 +2253,7 @@ public sealed class OracleApInvoiceService(
         catch (OracleException ex)
         {
             var message =
-                CleanOracleMessage(
-                    ex
-                );
+                CleanOracleMessage(ex);
 
             logger.LogError(
                 ex,
@@ -2623,8 +2283,7 @@ public sealed class OracleApInvoiceService(
                         '\r',
                         '\n'
                     },
-                    StringSplitOptions
-                        .RemoveEmptyEntries
+                    StringSplitOptions.RemoveEmptyEntries
                 )
                 .FirstOrDefault()
             ??
@@ -2639,17 +2298,11 @@ public sealed class OracleApInvoiceService(
         CancellationToken ct)
     {
         if (
-            string.IsNullOrWhiteSpace(
-                options.Host
-            )
+            string.IsNullOrWhiteSpace(options.Host)
             ||
-            string.IsNullOrWhiteSpace(
-                options.ServiceName
-            )
+            string.IsNullOrWhiteSpace(options.ServiceName)
             ||
-            string.IsNullOrWhiteSpace(
-                options.User
-            )
+            string.IsNullOrWhiteSpace(options.User)
         )
         {
             throw new OracleApBusinessException(
@@ -2662,10 +2315,7 @@ public sealed class OracleApInvoiceService(
                 options.ConnectionString
             );
 
-        await connection
-            .OpenAsync(
-                ct
-            );
+        await connection.OpenAsync(ct);
 
         return connection;
     }
@@ -2676,20 +2326,9 @@ public sealed class OracleApInvoiceService(
 
     private void ValidateConfiguration()
     {
-        _ =
-            GetLong(
-                "ORACLE_APPS_USER_ID"
-            );
-
-        _ =
-            GetLong(
-                "ORACLE_APPS_RESP_ID"
-            );
-
-        _ =
-            GetLong(
-                "ORACLE_APPS_RESP_APPL_ID"
-            );
+        _ = GetLong("ORACLE_APPS_USER_ID");
+        _ = GetLong("ORACLE_APPS_RESP_ID");
+        _ = GetLong("ORACLE_APPS_RESP_APPL_ID");
     }
 
     private static string MapInvoiceType(
@@ -2699,20 +2338,11 @@ public sealed class OracleApInvoiceService(
             .ToUpperInvariant()
         switch
         {
-            "GOODS" =>
-                "STANDARD",
-
-            "SERVICE" =>
-                "STANDARD",
-
-            "CREDIT" =>
-                "CREDIT",
-
-            "DEBIT" =>
-                "DEBIT",
-
-            _ =>
-                "STANDARD"
+            "GOODS" => "STANDARD",
+            "SERVICE" => "STANDARD",
+            "CREDIT" => "CREDIT",
+            "DEBIT" => "DEBIT",
+            _ => "STANDARD"
         };
     }
 
@@ -2724,11 +2354,8 @@ public sealed class OracleApInvoiceService(
             string.IsNullOrWhiteSpace(
                 config[key]
             )
-                ?
-                defaultValue
-                :
-                config[key]!
-                    .Trim();
+                ? defaultValue
+                : config[key]!.Trim();
     }
 
     private long GetLong(
@@ -2761,10 +2388,8 @@ public sealed class OracleApInvoiceService(
             )
             &&
             value > 0
-                ?
-                value
-                :
-                null;
+                ? value
+                : null;
     }
 
     private int GetInt(
@@ -2778,10 +2403,8 @@ public sealed class OracleApInvoiceService(
             )
             &&
             value > 0
-                ?
-                value
-                :
-                defaultValue;
+                ? value
+                : defaultValue;
     }
 
     private decimal GetDecimal(
@@ -2795,10 +2418,8 @@ public sealed class OracleApInvoiceService(
             )
             &&
             value >= 0
-                ?
-                value
-                :
-                defaultValue;
+                ? value
+                : defaultValue;
     }
 
     private static object DbValue(
@@ -2808,10 +2429,8 @@ public sealed class OracleApInvoiceService(
             string.IsNullOrWhiteSpace(
                 value
             )
-                ?
-                DBNull.Value
-                :
-                value.Trim();
+                ? DBNull.Value
+                : value.Trim();
     }
 
     private static long ReadRequiredInt64(

@@ -38,6 +38,10 @@ public sealed record OracleReceiptLine(
     long RcvTransactionId,
     string GrnNumber,
 
+    long ShipmentLineId,
+    long? ItemId,
+    string? ItemDescription,
+
     long PoHeaderId,
     string PoNumber,
 

@@ -230,12 +230,6 @@ export function PortalLayout() {
           ],
 
           [
-            "/grns",
-            "GRNs",
-            "grn",
-          ],
-
-          [
             "/invoices/new",
             "Submit Invoice",
             "invoice",

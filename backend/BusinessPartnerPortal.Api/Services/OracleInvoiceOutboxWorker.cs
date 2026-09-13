@@ -121,36 +121,10 @@ public sealed class OracleInvoiceOutboxWorker(
                         ct
                     );
 
-                var documents =
-                    await db.Documents
-                        .Where(
-                            x =>
-                                x.InvoiceId ==
-                                item.InvoiceId
-                        )
-                        .OrderBy(
-                            x =>
-                                x.UploadedAt
-                        )
-                        .Select(
-                            x =>
-                                new OracleApDocument(
-                                    x.Id,
-                                    x.DocumentType,
-                                    x.OriginalFileName,
-                                    x.ContentType,
-                                    x.FileContent
-                                )
-                        )
-                        .ToListAsync(
-                            ct
-                        );
-
                 var result =
                     await oracleAp
                         .ProcessInvoiceAsync(
                             snapshot,
-                            documents,
                             ct
                         );
 
@@ -630,6 +604,51 @@ public sealed class OracleInvoiceOutboxWorker(
                 }
             );
         }
+
+        // Queue document synchronization only after Oracle has returned
+        // the real AP INVOICE_ID and it has been stored on the portal invoice.
+        // The attachment worker maps:
+        // Portal Invoice UUID -> invoice.oracle_invoice_id -> portal documents.
+        var attachmentOutboxId = Guid.NewGuid();
+        var attachmentCorrelationId = Guid.NewGuid();
+        var attachmentPayload =
+            System.Text.Json.JsonSerializer.Serialize(
+                new
+                {
+                    portalInvoiceId = invoice.Id,
+                    oracleInvoiceId = result.OracleInvoiceId
+                }
+            );
+
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            INSERT INTO integration.outbox_messages
+            (
+                id,
+                event_type,
+                aggregate_type,
+                aggregate_id,
+                payload,
+                status,
+                attempt_count,
+                correlation_id,
+                created_at
+            )
+            VALUES
+            (
+                {attachmentOutboxId},
+                {"InvoiceAttachmentsReady"},
+                {"Invoice"},
+                {invoice.Id},
+                {attachmentPayload}::jsonb,
+                {"PENDING"},
+                0,
+                {attachmentCorrelationId},
+                {now}
+            )
+            """,
+            ct
+        );
 
         await db.SaveChangesAsync(
             ct
