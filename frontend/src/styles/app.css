@@ -4439,3 +4439,95 @@ td {
     min-width: 100px;
   }
 }
+
+/* =========================================================
+   SUPPLY CHAIN + FINANCE KPI / NAVIGATION UPDATE
+   2026-09-14
+   ========================================================= */
+
+/* Keep all five KPI cards on one row on normal desktop widths. */
+.finance-dashboard .role-kpis,
+.supply-dashboard .role-kpis {
+  display: grid !important;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+  gap: 10px !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+/* Vendor-dashboard style pastel KPI cards. */
+.finance-dashboard .role-kpi,
+.supply-dashboard .role-kpi {
+  min-height: 108px !important;
+  border-radius: 10px !important;
+  border: 1px solid rgba(15, 23, 42, 0.07) !important;
+  box-shadow: 0 3px 12px rgba(27, 49, 38, 0.025) !important;
+}
+
+.role-kpi-card-green {
+  background: #f1fbf6 !important;
+}
+
+.role-kpi-card-blue {
+  background: #f2f7ff !important;
+}
+
+.role-kpi-card-purple {
+  background: #faf4ff !important;
+}
+
+.role-kpi-card-orange {
+  background: #fff8ef !important;
+}
+
+.role-kpi-card-red {
+  background: #fff4f5 !important;
+}
+
+/* Kpis no longer render Live/current-data text; keep value spacing balanced. */
+.finance-dashboard .role-kpi strong,
+.supply-dashboard .role-kpi strong {
+  margin-bottom: 0 !important;
+}
+
+/* Dedicated Supply Chain table pages. */
+.supply-records-page {
+  overflow: hidden;
+}
+
+.supply-records-head {
+  align-items: center;
+}
+
+.supply-records-filters {
+  border-top: 1px solid #e6ebe8;
+}
+
+.supply-records-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.supply-page-number {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 11px;
+  color: #536174;
+  white-space: nowrap;
+}
+
+/* Responsive fallback only for smaller screens. */
+@media (max-width: 1050px) {
+  .finance-dashboard .role-kpis,
+  .supply-dashboard .role-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 650px) {
+  .finance-dashboard .role-kpis,
+  .supply-dashboard .role-kpis {
+    grid-template-columns: 1fr !important;
+  }
+}

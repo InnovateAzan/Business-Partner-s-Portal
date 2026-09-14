@@ -312,11 +312,6 @@ export function PortalLayout() {
                 "Payments",
                 "payment",
               ],
-              [
-                "/downloads",
-                "Documents",
-                "invoice",
-              ],
               ...(user.permissions.includes("INTEGRATION.VIEW")
                 ? [["/integration", "Integration Support", "integration"] as MenuItem]
                 : []),
@@ -333,21 +328,34 @@ export function PortalLayout() {
                   "Vendor Access",
                   "admin",
                 ],
-                [
-                  "/purchase-orders",
-                  "Purchase Orders",
-                  "po",
-                ],
-                [
-                  "/grns",
-                  "GRNs",
-                  "grn",
-                ],
-                [
-                  "/downloads",
-                  "Documents",
-                  "invoice",
-                ],
+                ...(user.permissions.includes("PO.VIEW")
+                  ? [[
+                      "/supply-chain/purchase-orders",
+                      "Recent Purchase Orders",
+                      "po",
+                    ] as MenuItem]
+                  : []),
+                ...(user.permissions.includes("GRN.VIEW")
+                  ? [[
+                      "/supply-chain/grns",
+                      "Recent GRNs",
+                      "grn",
+                    ] as MenuItem]
+                  : []),
+                ...(user.permissions.includes("VENDOR.MANAGE")
+                  ? [[
+                      "/supply-chain/vendor-requests",
+                      "Pending Vendor Requests",
+                      "support",
+                    ] as MenuItem]
+                  : []),
+                ...(user.permissions.includes("VENDOR.VIEW")
+                  ? [[
+                      "/supply-chain/onboarded-vendors",
+                      "Onboarded Vendors",
+                      "user",
+                    ] as MenuItem]
+                  : []),
                 ...(user.permissions.includes("INTEGRATION.VIEW")
                   ? [["/integration", "Integration Support", "integration"] as MenuItem]
                   : []),

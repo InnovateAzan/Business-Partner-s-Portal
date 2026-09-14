@@ -54,7 +54,6 @@ import {
 } from "./pages/VendorProfilePage";
 
 import {
-  DownloadsPage,
   SupportPage,
 } from "./pages/SimplePages";
 
@@ -69,6 +68,10 @@ import {
 import {
   InternalDashboard,
 } from "./pages/InternalDashboard";
+
+import {
+  SupplyChainRecordsPage,
+} from "./pages/SupplyChainRecordsPage";
 
 import {
   AdminDashboard,
@@ -259,12 +262,6 @@ export default function App() {
               }
             />
 
-            <Route
-              path="/downloads"
-              element={
-                <DownloadsPage />
-              }
-            />
 
             <Route
               path="/support"
@@ -295,6 +292,35 @@ export default function App() {
               path="/supply-chain/vendors"
               element={
                 <VendorAccessPage />
+              }
+            />
+
+
+            <Route
+              path="/supply-chain/purchase-orders"
+              element={
+                <SupplyChainRecordsPage kind="po" />
+              }
+            />
+
+            <Route
+              path="/supply-chain/grns"
+              element={
+                <SupplyChainRecordsPage kind="grn" />
+              }
+            />
+
+            <Route
+              path="/supply-chain/vendor-requests"
+              element={
+                <SupplyChainRecordsPage kind="pending" />
+              }
+            />
+
+            <Route
+              path="/supply-chain/onboarded-vendors"
+              element={
+                <SupplyChainRecordsPage kind="onboarded" />
               }
             />
 

@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS integration.outbox_messages(id uuid primary key defau
 CREATE TABLE IF NOT EXISTS audit.audit_logs(id bigserial primary key,user_id uuid references security.users(id),vendor_id uuid references master.vendors(id),action varchar(150) not null,entity_type varchar(100) not null,entity_id uuid,old_values jsonb,new_values jsonb,additional_data jsonb,ip_address inet,user_agent text,correlation_id uuid,created_at timestamptz not null default now());
 
 INSERT INTO security.roles(code,name,is_system_role) VALUES ('ADMIN','Administrator',true),('FINANCE','Finance / AP',true),('SUPPLY_CHAIN','Supply Chain',true),('INTEGRATION_SUPPORT','Integration Support',true),('VENDOR','Vendor',true) ON CONFLICT(code) DO NOTHING;
-INSERT INTO security.features(code,name,route_path,display_order) VALUES ('DASHBOARD','Dashboard','/dashboard',10),('PURCHASE_ORDERS','Purchase Orders','/purchase-orders',20),('GRNS','GRNs','/grns',30),('INVOICES','Invoices','/invoices',40),('PAYMENTS','Payments','/payments',50),('USER_MANAGEMENT','User Management','/admin/users',60),('AUDIT','Audit','/audit',70) ON CONFLICT(code) DO NOTHING;
+INSERT INTO security.features(code,name,route_path,display_order) VALUES ('DASHBOARD','Dashboard','/dashboard',10),('PURCHASE_ORDERS','Purchase Orders','/purchase-orders',20),('GRNS','GRNs','/grns',30),('INVOICES','Invoices','/invoices',40),('PAYMENTS','Payments','/payments',50),('SUPPLY_CHAIN_RECENT_PO','Supply Chain - Recent Purchase Orders','/supply-chain/purchase-orders',55),('SUPPLY_CHAIN_RECENT_GRN','Supply Chain - Recent GRNs','/supply-chain/grns',56),('SUPPLY_CHAIN_VENDOR_REQUESTS','Supply Chain - Pending Vendor Requests','/supply-chain/vendor-requests',57),('SUPPLY_CHAIN_ONBOARDED_VENDORS','Supply Chain - Onboarded Vendors','/supply-chain/onboarded-vendors',58),('USER_MANAGEMENT','User Management','/admin/users',60),('AUDIT','Audit','/audit',70) ON CONFLICT(code) DO NOTHING;
 INSERT INTO security.permissions(feature_id,code,name) VALUES
 ((SELECT id FROM security.features WHERE code='DASHBOARD'),'DASHBOARD.VIEW','View Dashboard'),
 ((SELECT id FROM security.features WHERE code='PURCHASE_ORDERS'),'PO.VIEW','View Purchase Orders'),
@@ -41,13 +41,17 @@ INSERT INTO security.permissions(feature_id,code,name) VALUES
 ((SELECT id FROM security.features WHERE code='PAYMENTS'),'PAYMENT.VIEW','View Payments'),
 ((SELECT id FROM security.features WHERE code='USER_MANAGEMENT'),'USER.MANAGE','Manage Users'),
 ((SELECT id FROM security.features WHERE code='AUDIT'),'AUDIT.VIEW','View Audit'),
+((SELECT id FROM security.features WHERE code='SUPPLY_CHAIN_RECENT_PO'),'SUPPLY_CHAIN_PO_VIEW','View Supply Chain Recent Purchase Orders'),
+((SELECT id FROM security.features WHERE code='SUPPLY_CHAIN_RECENT_GRN'),'SUPPLY_CHAIN_GRN_VIEW','View Supply Chain Recent GRNs'),
+((SELECT id FROM security.features WHERE code='SUPPLY_CHAIN_VENDOR_REQUESTS'),'SUPPLY_CHAIN_VENDOR_REQUEST_VIEW','View Pending Vendor Requests'),
+((SELECT id FROM security.features WHERE code='SUPPLY_CHAIN_ONBOARDED_VENDORS'),'SUPPLY_CHAIN_ONBOARDED_VENDOR_VIEW','View Recently Onboarded Vendors'),
 (NULL,'VENDOR.MANAGE','Manage Vendor Portal Access'),
 (NULL,'INTEGRATION.VIEW','View Oracle Integration Status'),
 (NULL,'INTEGRATION.RETRY','Retry Oracle Integration') ON CONFLICT(code) DO NOTHING;
 INSERT INTO security.role_permissions(role_id,permission_id) SELECT r.id,p.id FROM security.roles r CROSS JOIN security.permissions p WHERE r.code='ADMIN' ON CONFLICT DO NOTHING;
 INSERT INTO security.role_permissions(role_id,permission_id) SELECT r.id,p.id FROM security.roles r JOIN security.permissions p ON p.code IN('DASHBOARD.VIEW','PO.VIEW','GRN.VIEW','INVOICE.CREATE','INVOICE.VIEW_OWN','INVOICE.RESUBMIT','DOCUMENT.UPLOAD','DOCUMENT.DOWNLOAD','PAYMENT.VIEW') WHERE r.code='VENDOR' ON CONFLICT DO NOTHING;
 INSERT INTO security.role_permissions(role_id,permission_id) SELECT r.id,p.id FROM security.roles r JOIN security.permissions p ON p.code IN('DASHBOARD.VIEW','PO.VIEW','GRN.VIEW','INVOICE.VIEW_ALL','DOCUMENT.DOWNLOAD','PAYMENT.VIEW') WHERE r.code='FINANCE' ON CONFLICT DO NOTHING;
-INSERT INTO security.role_permissions(role_id,permission_id) SELECT r.id,p.id FROM security.roles r JOIN security.permissions p ON p.code IN('DASHBOARD.VIEW','PO.VIEW','GRN.VIEW','VENDOR.MANAGE') WHERE r.code='SUPPLY_CHAIN' ON CONFLICT DO NOTHING;
+INSERT INTO security.role_permissions(role_id,permission_id) SELECT r.id,p.id FROM security.roles r JOIN security.permissions p ON p.code IN('DASHBOARD.VIEW','VENDOR.MANAGE','SUPPLY_CHAIN_PO_VIEW','SUPPLY_CHAIN_GRN_VIEW','SUPPLY_CHAIN_VENDOR_REQUEST_VIEW','SUPPLY_CHAIN_ONBOARDED_VENDOR_VIEW') WHERE r.code='SUPPLY_CHAIN' ON CONFLICT DO NOTHING;
 INSERT INTO security.role_permissions(role_id,permission_id) SELECT r.id,p.id FROM security.roles r JOIN security.permissions p ON p.code IN('DASHBOARD.VIEW','INTEGRATION.VIEW','INTEGRATION.RETRY') WHERE r.code='INTEGRATION_SUPPORT' ON CONFLICT DO NOTHING;
 
 -- 2026 portal completion additions

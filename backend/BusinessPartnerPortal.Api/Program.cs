@@ -190,17 +190,10 @@ builder.Services
 // CORS
 // ============================================================
 //
-// Supports:
-//   http://localhost:5173
-//   http://127.0.0.1:5173
-//   http://10.1.40.52:5173
-//
-// You can also define:
-//
-// FRONTEND_URLS=http://localhost:5173;http://10.1.40.52:5173
-//
-// or keep the existing:
-// FRONTEND_URL=http://10.1.40.52:5173
+// Configure explicit origins in FRONTEND_URLS (semicolon or comma separated).
+// FRONTEND_URL remains the canonical public frontend URL for email links.
+// CORS intentionally does not use a wildcard because browser credentials are
+// enabled by the frontend HTTP client.
 //
 // ============================================================
 
@@ -219,18 +212,14 @@ var allowedOrigins =
         .Where(x => !string.IsNullOrWhiteSpace(x))
         .ToList();
 
-// Always allow local development.
+// Preserve local development origins while requiring LAN origins to be
+// explicitly configured through FRONTEND_URLS or FRONTEND_URL.
 allowedOrigins.Add(
     "http://localhost:5173"
 );
 
 allowedOrigins.Add(
     "http://127.0.0.1:5173"
-);
-
-// Current LAN frontend.
-allowedOrigins.Add(
-    "http://10.1.40.52:5173"
 );
 
 // Remove duplicate origins.
@@ -440,8 +429,7 @@ builder.WebHost
             "API_URLS"
         ]
         ??
-        "http://localhost:5044;" +
-        "https://localhost:7044"
+        "http://0.0.0.0:5044"
     );
 
 // ============================================================

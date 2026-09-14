@@ -138,6 +138,142 @@ const qcClass = (
 };
 
 
+const presentInvoiceStatus = (
+  row: PortalInvoice
+) =>
+{
+  const status =
+    (row.status || "")
+      .trim()
+      .toUpperCase();
+
+  const integration =
+    (row.integrationStatus || "")
+      .trim()
+      .toUpperCase();
+
+  if (status === "CANCELLED")
+  {
+    return "Cancelled";
+  }
+
+  if (status === "PAID")
+  {
+    return "Pending for Payment";
+  }
+
+  if (
+    status === "APPROVED"
+    || status === "ACCEPTED"
+  )
+  {
+    return "Approved";
+  }
+
+  if (status === "RETURNED")
+  {
+    return "Returned for Correction";
+  }
+
+  if (
+    [
+      "INTEGRATION_FAILED",
+      "FAILED",
+      "ORACLE_REJECTED",
+      "REJECTED"
+    ].includes(status)
+    || [
+      "FAILED",
+      "INTEGRATION_FAILED"
+    ].includes(integration)
+  )
+  {
+    return "Action Required";
+  }
+
+  if (
+    status === "PENDING"
+    || status === "UNDER_FINANCE_REVIEW"
+    || status === "SENT_TO_ORACLE"
+    || integration === "SUCCESS"
+  )
+  {
+    return "Pending";
+  }
+
+  if (
+    [
+      "PROCESSING",
+      "RETRYING",
+      "RESUBMITTED"
+    ].includes(status)
+    || [
+      "PENDING",
+      "PROCESSING",
+      "RETRYING"
+    ].includes(integration)
+  )
+  {
+    return "Processing";
+  }
+
+  return "Submitted";
+};
+
+
+const invoiceStatusClass = (
+  value: string
+) =>
+{
+  if (
+    [
+      "Cancelled",
+      "Action Required",
+      "Returned for Correction"
+    ].includes(value)
+  )
+  {
+    return "red";
+  }
+
+  if (
+    [
+      "Pending",
+      "Processing"
+    ].includes(value)
+  )
+  {
+    return "orange";
+  }
+
+  if (
+    [
+      "Approved",
+      "Pending for Payment"
+    ].includes(value)
+  )
+  {
+    return "green";
+  }
+
+  return "blue";
+};
+
+
+const invoiceForGrn = (
+  invoice: PortalInvoice,
+  grnNumber: string
+) =>
+  (invoice.grnNumbers || [])
+    .map(
+      value =>
+        String(value).trim()
+    )
+    .includes(
+      grnNumber.trim()
+    );
+
+
 // ============================================================
 // UNIQUE GRN BUSINESS-LINE KEY
 // ============================================================
@@ -1200,6 +1336,51 @@ export function PurchaseOrdersPage()
       allGrns;
 
 
+  const invoiceStatusForGrn = (
+    grnNumber: string
+  ) =>
+  {
+    const matchingInvoices =
+      invoices
+        .filter(
+          invoice =>
+            invoiceForGrn(
+              invoice,
+              grnNumber
+            )
+        )
+        .sort(
+          (a, b) =>
+          {
+            const aDate =
+              new Date(
+                a.updatedAt
+                || a.submissionDate
+                || 0
+              ).getTime();
+
+            const bDate =
+              new Date(
+                b.updatedAt
+                || b.submissionDate
+                || 0
+              ).getTime();
+
+            return bDate - aDate;
+          }
+        );
+
+    if (!matchingInvoices.length)
+    {
+      return "Not Invoiced";
+    }
+
+    return presentInvoiceStatus(
+      matchingInvoices[0]
+    );
+  };
+
+
   const totals =
     shownGrns.reduce(
       (
@@ -1930,7 +2111,11 @@ export function PurchaseOrdersPage()
                       QC Status
                     </th>
 
-                    <th>
+                    <th style={{ paddingRight: "28px" }}>
+                      Invoice Status
+                    </th>
+
+                    <th style={{ paddingLeft: "12px" }}>
                       Action
                     </th>
 
@@ -1999,7 +2184,29 @@ export function PurchaseOrdersPage()
                               </span>
                             </td>
 
-                            <td>
+                            <td style={{ paddingRight: "28px" }}>
+                              {(() =>
+                              {
+                                const invoiceStatus =
+                                  invoiceStatusForGrn(
+                                    grn.number
+                                  );
+
+                                return (
+                                  <span
+                                    className={
+                                      `status ${invoiceStatusClass(
+                                        invoiceStatus
+                                      )}`
+                                    }
+                                  >
+                                    {invoiceStatus}
+                                  </span>
+                                );
+                              })()}
+                            </td>
+
+                            <td style={{ paddingLeft: "12px" }}>
 
                               <button
                                 className="table-btn"
@@ -2061,7 +2268,7 @@ export function PurchaseOrdersPage()
 
                                 <td
                                   className="po-grn-lines"
-                                  colSpan={8}
+                                  colSpan={9}
                                 >
 
                                   <table>
@@ -2254,7 +2461,7 @@ export function PurchaseOrdersPage()
 
                       <td
                         className="empty"
-                        colSpan={8}
+                        colSpan={9}
                       >
                         {
                           grnView ===

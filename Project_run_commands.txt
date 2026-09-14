@@ -49,5 +49,5 @@ git remote -v
 git branch -M development
 git status
 git add .
-git commit -m "Project Version 1.0.0"
+git commit -m "Project Version 1.0.1"
 git push -u origin development --force

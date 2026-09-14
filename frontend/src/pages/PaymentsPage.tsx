@@ -181,6 +181,8 @@ export function PaymentsPage() {
 
           const visibleText = [
             row.invoiceNumber,
+            row.poNumber || "-",
+            row.grnNumber || "-",
             row.invoiceAmount ?? 0,
             row.amountPaid ?? 0,
             row.outstandingAmount ?? 0,
@@ -220,6 +222,8 @@ export function PaymentsPage() {
       "payments.csv",
       [
         "Invoice #",
+        "PO Number",
+        "GRN Number",
         "Invoice Amount",
         "Amount Paid",
         "Outstanding",
@@ -229,6 +233,8 @@ export function PaymentsPage() {
       filteredRows.map(
         (row) => [
           row.invoiceNumber,
+          row.poNumber || "-",
+          row.grnNumber || "-",
           Number(
             row.invoiceAmount || 0
           ),
@@ -292,6 +298,14 @@ export function PaymentsPage() {
               Invoice #
             </th>
 
+            <th>
+              PO Number
+            </th>
+
+            <th>
+              GRN Number
+            </th>
+
             <th className="payment-column">
               Invoice Amount
             </th>
@@ -328,6 +342,14 @@ export function PaymentsPage() {
                   {
                     row.invoiceNumber
                   }
+                </td>
+
+                <td>
+                  {row.poNumber || "-"}
+                </td>
+
+                <td>
+                  {row.grnNumber || "-"}
                 </td>
 
                 <td className="payment-column">
@@ -373,7 +395,7 @@ export function PaymentsPage() {
           {!filteredRows.length && (
             <tr>
               <td
-                colSpan={6}
+                colSpan={8}
                 className="empty"
               >
                 No payments match
