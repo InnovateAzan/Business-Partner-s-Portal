@@ -75,6 +75,33 @@ export function PortalLayout() {
   const [profileLoading, setProfileLoading] = useState(false);
   const [supplier, setSupplier] = useState<OracleSupplier | null>(null);
 
+  const [
+    sidebarPinnedOpen,
+    setSidebarPinnedOpen,
+  ] = useState(() =>
+    window.localStorage.getItem(
+      "portal-sidebar-pinned"
+    ) === "true"
+  );
+
+  const [
+    sidebarHovered,
+    setSidebarHovered,
+  ] = useState(false);
+
+  const sidebarExpanded =
+    sidebarPinnedOpen ||
+    sidebarHovered;
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      "portal-sidebar-pinned",
+      sidebarPinnedOpen
+        ? "true"
+        : "false"
+    );
+  }, [sidebarPinnedOpen]);
+
   // ============================================================
   // UNREAD COUNT
   // ============================================================
@@ -292,26 +319,34 @@ export function PortalLayout() {
                 "Dashboard",
                 "dashboard",
               ],
-              [
-                "/invoices",
-                "Invoices",
-                "invoice",
-              ],
-              [
-                "/purchase-orders",
-                "Purchase Orders",
-                "po",
-              ],
-              [
-                "/grns",
-                "GRNs",
-                "grn",
-              ],
-              [
-                "/payments",
-                "Payments",
-                "payment",
-              ],
+              ...(user.permissions.includes("INVOICE.VIEW_ALL")
+                ? [[
+                    "/invoices",
+                    "Invoices",
+                    "invoice",
+                  ] as MenuItem]
+                : []),
+              ...(user.permissions.includes("PO.VIEW")
+                ? [[
+                    "/purchase-orders",
+                    "Purchase Orders",
+                    "po",
+                  ] as MenuItem]
+                : []),
+              ...(user.permissions.includes("GRN.VIEW")
+                ? [[
+                    "/grns",
+                    "GRNs",
+                    "grn",
+                  ] as MenuItem]
+                : []),
+              ...(user.permissions.includes("PAYMENT.VIEW")
+                ? [[
+                    "/payments",
+                    "Payments",
+                    "payment",
+                  ] as MenuItem]
+                : []),
               ...(user.permissions.includes("INTEGRATION.VIEW")
                 ? [["/integration", "Integration Support", "integration"] as MenuItem]
                 : []),
@@ -559,8 +594,72 @@ export function PortalLayout() {
   // ============================================================
 
   return (
-    <div className="portal-shell">
-      <aside className="portal-sidebar">
+    <div
+      className={`portal-shell ${
+        sidebarPinnedOpen
+          ? "sidebar-pinned-open"
+          : "sidebar-pinned-closed"
+      }`}
+    >
+      <aside
+        className={`portal-sidebar ${
+          sidebarExpanded
+            ? "expanded"
+            : "collapsed"
+        }`}
+        onMouseEnter={() =>
+          setSidebarHovered(true)
+        }
+        onMouseLeave={() =>
+          setSidebarHovered(false)
+        }
+      >
+        <button
+          type="button"
+          className="sidebar-toggle"
+          onClick={() =>
+            setSidebarPinnedOpen(
+              (current) =>
+                !current
+            )
+          }
+          aria-label={
+            sidebarPinnedOpen
+              ? "Collapse sidebar"
+              : "Keep sidebar open"
+          }
+          title={
+            sidebarPinnedOpen
+              ? "Collapse sidebar"
+              : "Keep sidebar open"
+          }
+        >
+          <svg
+            className="sidebar-toggle-icon"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <rect
+              x="3"
+              y="4"
+              width="18"
+              height="16"
+              rx="3"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+            />
+            <path
+              d="M9 4v16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
+
         <div className="pc-brand">
           <img
             src="/pakistan-cables-logo.png"
@@ -589,6 +688,11 @@ export function PortalLayout() {
                 key={to}
                 to={to}
                 end
+                title={
+                  sidebarExpanded
+                    ? undefined
+                    : label
+                }
                 className={({
                   isActive,
                 }) =>
@@ -612,6 +716,11 @@ export function PortalLayout() {
         <button
           type="button"
           className="side-link side-logout"
+          title={
+            sidebarExpanded
+              ? undefined
+              : "Logout"
+          }
           onClick={() => {
             logout();
 

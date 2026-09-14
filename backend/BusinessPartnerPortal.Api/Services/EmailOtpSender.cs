@@ -685,8 +685,21 @@ public sealed class EmailOtpSender
     public Task SendPasswordResetAsync(string email, string resetUrl, CancellationToken ct = default) =>
         SendEmailAsync(email, "Pakistan Cables Portal Password Reset", $"<p>Use this link to reset your password. It expires in 30 minutes.</p><p><a href=\"{WebUtility.HtmlEncode(resetUrl)}\">Reset Password</a></p>", ct);
 
-    public Task SendLoginOtpAsync(string email, string otp, CancellationToken ct = default) =>
-        SendEmailAsync(email, "Pakistan Cables Portal Device Verification Code", $"<p>Your device verification code is <strong>{WebUtility.HtmlEncode(otp)}</strong>.</p><p>This code expires in 10 minutes.</p>", ct);
+    public async Task SendLoginOtpAsync(
+        string email,
+        string otp,
+        CancellationToken ct = default)
+    {
+        _logger.LogInformation(
+            "Login OTP email send started. Recipient={Recipient}",
+            email);
+
+        await SendEmailAsync(
+            email,
+            "Pakistan Cables Portal Device Verification Code",
+            $"<p>Your device verification code is <strong>{WebUtility.HtmlEncode(otp)}</strong>.</p><p>This code expires in 10 minutes.</p>",
+            ct);
+    }
 
     // ============================================================
     // COMMON SMTP SENDER
@@ -822,9 +835,25 @@ public sealed class EmailOtpSender
             port,
             enableSsl);
 
-        await smtp.SendMailAsync(
-            message,
-            ct);
+        try
+        {
+            await smtp.SendMailAsync(
+                message,
+                ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(
+                ex,
+                "SMTP email send failed. Recipient={Recipient} Host={Host} Port={Port} SSL={SSL} FailureKind={FailureKind}",
+                recipient,
+                host,
+                port,
+                enableSsl,
+                DescribeSmtpFailure(ex));
+
+            throw;
+        }
 
         _logger.LogInformation(
             "Email sent successfully to {Recipient}.",
@@ -854,6 +883,38 @@ public sealed class EmailOtpSender
         return string.IsNullOrWhiteSpace(value)
             ? null
             : value.Trim();
+    }
+
+    private static string DescribeSmtpFailure(Exception ex)
+    {
+        if (ex is SmtpFailedRecipientException recipientException &&
+            recipientException.Message.Contains("relay", StringComparison.OrdinalIgnoreCase))
+        {
+            return "RelayDenied";
+        }
+
+        if (ex is SmtpException smtpException)
+        {
+            return smtpException.StatusCode switch
+            {
+                SmtpStatusCode.MustIssueStartTlsFirst => "TlsRequired",
+                SmtpStatusCode.ClientNotPermitted => "AuthenticationOrRelayDenied",
+                SmtpStatusCode.MailboxUnavailable => "MailboxUnavailableOrRelayDenied",
+                _ => $"Smtp:{smtpException.StatusCode}"
+            };
+        }
+
+        if (ex is TimeoutException)
+        {
+            return "Timeout";
+        }
+
+        if (ex.GetType().Name.Contains("Authentication", StringComparison.OrdinalIgnoreCase))
+        {
+            return "TlsOrAuthenticationFailure";
+        }
+
+        return "ConnectionOrTransportFailure";
     }
 
     private bool GetBool(

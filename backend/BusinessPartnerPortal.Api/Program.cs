@@ -43,12 +43,37 @@ builder.Configuration
 // LOGGING
 // ============================================================
 
+var logDirectory =
+    Path.Combine(
+        builder.Environment.ContentRootPath,
+        "logs"
+    );
+
+Directory.CreateDirectory(
+    logDirectory
+);
+
+var logFilePath =
+    Path.Combine(
+        logDirectory,
+        "business-partner-portal.log"
+    );
+
 Log.Logger =
     new LoggerConfiguration()
         .Enrich
         .FromLogContext()
         .WriteTo
         .Console()
+        .WriteTo
+        .File(
+            logFilePath,
+            shared: true,
+            fileSizeLimitBytes: 20 * 1024 * 1024,
+            rollOnFileSizeLimit: true,
+            retainedFileCountLimit: 10,
+            flushToDiskInterval: TimeSpan.FromSeconds(2)
+        )
         .CreateLogger();
 
 builder.Host.UseSerilog();
@@ -220,6 +245,10 @@ allowedOrigins.Add(
 
 allowedOrigins.Add(
     "http://127.0.0.1:5173"
+);
+
+allowedOrigins.Add(
+    "http://192.168.1.115:5173"
 );
 
 // Remove duplicate origins.

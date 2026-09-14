@@ -34,6 +34,26 @@ public sealed record OracleApProcessResult(
     IReadOnlyList<string> Rejections
 );
 
+public sealed record OracleApInterfaceOutcome(
+    long? ImportedInvoiceId,
+    long? InterfaceInvoiceId,
+    string? InterfaceStatus,
+    IReadOnlyList<string> Rejections
+);
+
+public sealed class OracleApPendingException : OracleApBusinessException
+{
+    public long InterfaceInvoiceId { get; }
+    public string? InterfaceStatus { get; }
+
+    public OracleApPendingException(long interfaceInvoiceId, string? interfaceStatus)
+        : base($"Oracle AP interface invoice {interfaceInvoiceId} is still {interfaceStatus ?? "PENDING"}.")
+    {
+        InterfaceInvoiceId = interfaceInvoiceId;
+        InterfaceStatus = interfaceStatus;
+    }
+}
+
 public sealed record OracleReceiptLine(
     long RcvTransactionId,
     string GrnNumber,
@@ -93,8 +113,20 @@ public sealed class OracleApRejectedException
         get;
     }
 
+    public long? ConcurrentRequestId
+    {
+        get;
+    }
+
+    public long? InterfaceInvoiceId
+    {
+        get;
+    }
+
     public OracleApRejectedException(
-        IReadOnlyList<string> rejections)
+        IReadOnlyList<string> rejections,
+        long? concurrentRequestId = null,
+        long? interfaceInvoiceId = null)
         : base(
             rejections.Count ==
             0
@@ -106,5 +138,11 @@ public sealed class OracleApRejectedException
     {
         Rejections =
             rejections;
+
+        ConcurrentRequestId =
+            concurrentRequestId;
+
+        InterfaceInvoiceId =
+            interfaceInvoiceId;
     }
 }

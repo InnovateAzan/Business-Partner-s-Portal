@@ -41,7 +41,14 @@ public sealed class OracleAttachmentOutboxWorker(
                 logger.LogError(ex, "Oracle attachment outbox worker iteration failed.");
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
     }
 
@@ -163,6 +170,10 @@ public sealed class OracleAttachmentOutboxWorker(
                             document.FileName,
                             oracleInvoiceId);
                     }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        throw;
+                    }
                     catch (Exception ex)
                     {
                         var error = Sanitize(ex.Message);
@@ -208,6 +219,10 @@ public sealed class OracleAttachmentOutboxWorker(
                         ct);
                 }
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 await MarkFailureAsync(db, item, Sanitize(ex.Message), ct);
@@ -238,9 +253,27 @@ public sealed class OracleAttachmentOutboxWorker(
                 attempt_count,
                 correlation_id
             FROM integration.outbox_messages
-            WHERE status IN ('PENDING', 'RETRYING')
+            WHERE
+              (
+                status IN ('PENDING', 'RETRYING')
+                OR
+                (
+                  status = 'PROCESSING'
+                  AND
+                  (
+                    next_attempt_at <= now()
+                    OR
+                    (next_attempt_at IS NULL AND created_at <= now() - interval '15 minutes')
+                  )
+                )
+              )
               AND event_type = 'InvoiceAttachmentsReady'
-              AND (next_attempt_at IS NULL OR next_attempt_at <= now())
+              AND
+              (
+                status = 'PROCESSING'
+                OR next_attempt_at IS NULL
+                OR next_attempt_at <= now()
+              )
             ORDER BY created_at
             FOR UPDATE SKIP LOCKED
             LIMIT 3
@@ -267,6 +300,7 @@ public sealed class OracleAttachmentOutboxWorker(
                 UPDATE integration.outbox_messages
                 SET status = 'PROCESSING',
                     attempt_count = attempt_count + 1,
+                    next_attempt_at = now() + interval '15 minutes',
                     last_error = NULL
                 WHERE id = @id
                 """;

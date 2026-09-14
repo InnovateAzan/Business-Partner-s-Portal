@@ -19,9 +19,25 @@ public sealed class OracleService(
                 options.ConnectionString
             );
 
-        await connection.OpenAsync(ct);
-
-        return connection;
+        try
+        {
+            await connection.OpenAsync(ct);
+            return connection;
+        }
+        catch (OracleException ex) when (ct.IsCancellationRequested && ex.Number == 1013)
+        {
+            await connection.DisposeAsync();
+            throw new OperationCanceledException(
+                "Oracle connection opening was cancelled because the application is stopping.",
+                ex,
+                ct
+            );
+        }
+        catch
+        {
+            await connection.DisposeAsync();
+            throw;
+        }
     }
 
     // ============================================================
@@ -875,6 +891,14 @@ public sealed class OracleService(
             }
 
             return result;
+        }
+        catch (OracleException ex) when (ct.IsCancellationRequested && ex.Number == 1013)
+        {
+            throw new OperationCanceledException(
+                "Oracle query was cancelled because the application is stopping.",
+                ex,
+                ct
+            );
         }
         catch (OracleException ex)
         {

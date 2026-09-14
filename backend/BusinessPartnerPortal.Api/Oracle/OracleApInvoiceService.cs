@@ -1,4 +1,5 @@
 using System.Data;
+using System.Diagnostics;
 using System.Globalization;
 
 using Oracle.ManagedDataAccess.Client;
@@ -20,6 +21,19 @@ public sealed class OracleApInvoiceService(
         CancellationToken ct)
     {
         ValidateConfiguration();
+
+        // Keep the identifiers on every step log emitted for this submission.
+        // This is especially important when a process dies after Oracle commits
+        // but before the PostgreSQL outbox can be finalized.
+        using var logScope = logger.BeginScope(
+            new Dictionary<string, object?>
+            {
+                ["InvoiceNumber"] = invoice.InvoiceNumber,
+                ["PortalInvoiceId"] = invoice.PortalInvoiceId,
+                ["OracleVendorId"] = invoice.VendorId
+            });
+
+        logger.LogInformation("Starting Oracle AP submission.");
 
         var source =
             Get(
@@ -55,6 +69,17 @@ public sealed class OracleApInvoiceService(
                 source,
                 Array.Empty<string>()
             );
+        }
+
+        // A host can stop after staging the interface row but before the portal
+        // records the result.  Never create a second interface row in that case.
+        var existingInterface = await GetInterfaceOutcomeAsync(invoice.VendorId, invoice.InvoiceNumber, ct);
+        if (existingInterface.InterfaceInvoiceId.HasValue)
+        {
+            if (string.Equals(existingInterface.InterfaceStatus, "REJECTED", StringComparison.OrdinalIgnoreCase) || existingInterface.Rejections.Count > 0)
+                throw new OracleApRejectedException(existingInterface.Rejections.Count > 0 ? existingInterface.Rejections : new[] { "Oracle AP interface status is REJECTED." }, null, existingInterface.InterfaceInvoiceId);
+
+            throw new OracleApPendingException(existingInterface.InterfaceInvoiceId.Value, existingInterface.InterfaceStatus);
         }
 
         var supplier =
@@ -100,6 +125,16 @@ public sealed class OracleApInvoiceService(
             );
         }
 
+        var paymentMethod =
+            await RunOracleStepAsync(
+                "PROCESS.PAYMENT_METHOD_RESOLUTION",
+                () => ResolvePaymentMethodAsync(
+                    vendorSiteId,
+                    orgId,
+                    ct
+                )
+            );
+
         var receiptLines =
             await RunOracleStepAsync(
                 "PROCESS.RECEIPT_LINE_RESOLUTION",
@@ -137,6 +172,7 @@ public sealed class OracleApInvoiceService(
                     invoice,
                     vendorSiteId,
                     orgId,
+                    paymentMethod,
                     source,
                     receiptLines,
                     ct
@@ -153,13 +189,24 @@ public sealed class OracleApInvoiceService(
                 )
             );
 
-        await RunOracleStepAsync(
-            "PROCESS.APXIIMPT_WAIT",
-            () => WaitForConcurrentRequestAsync(
-                requestId,
-                ct
-            )
-        );
+        try
+        {
+            await RunOracleStepAsync(
+                "PROCESS.APXIIMPT_WAIT",
+                () => WaitForConcurrentRequestAsync(requestId, ct)
+            );
+        }
+        catch (OracleApBusinessException)
+        {
+            // An APXIIMPT Error commonly leaves the actionable explanation in
+            // AP_INTERFACE_REJECTIONS. Surface it as a permanent rejection
+            // instead of retrying an already rejected interface row.
+            var rejected = await GetInterfaceRejectionsAsync(interfaceInvoiceId, ct);
+            if (rejected.Count > 0)
+                throw new OracleApRejectedException(rejected, requestId, interfaceInvoiceId);
+
+            throw;
+        }
 
         var rejections =
             await RunOracleStepAsync(
@@ -170,10 +217,34 @@ public sealed class OracleApInvoiceService(
                 )
             );
 
-        if (rejections.Count > 0)
+        var interfaceStatus =
+            await RunOracleStepAsync(
+                "PROCESS.INTERFACE_STATUS_LOOKUP",
+                () => GetInterfaceStatusAsync(
+                    interfaceInvoiceId,
+                    ct
+                )
+            );
+
+        if (
+            string.Equals(
+                interfaceStatus,
+                "REJECTED",
+                StringComparison.OrdinalIgnoreCase
+            )
+            ||
+            rejections.Count > 0
+        )
         {
             throw new OracleApRejectedException(
-                rejections
+                rejections.Count > 0
+                    ? rejections
+                    : new[]
+                    {
+                        "Oracle AP interface status is REJECTED."
+                    },
+                requestId,
+                interfaceInvoiceId
             );
         }
 
@@ -189,9 +260,14 @@ public sealed class OracleApInvoiceService(
 
         if (!importedInvoiceId.HasValue)
         {
+            // Normal completion means the concurrent program ended normally; it
+            // does not prove this particular interface row was imported.
+            if (!string.IsNullOrWhiteSpace(interfaceStatus))
+                throw new OracleApPendingException(interfaceInvoiceId, interfaceStatus);
+
             throw new OracleApBusinessException(
-                "Payables Open Interface Import completed, " +
-                "but the invoice was not found in AP_INVOICES_ALL."
+                "Payables Open Interface Import completed, but the invoice was " +
+                "not imported and no remaining interface row was found."
             );
         }
 
@@ -212,6 +288,7 @@ public sealed class OracleApInvoiceService(
         OracleApPortalInvoice invoice,
         long vendorSiteId,
         long orgId,
+        string? paymentMethod,
         string source,
         IReadOnlyList<OracleReceiptLine> receiptLines,
         CancellationToken ct)
@@ -221,6 +298,7 @@ public sealed class OracleApInvoiceService(
 
         using var transaction =
             connection.BeginTransaction();
+
 
         try
         {
@@ -268,6 +346,7 @@ public sealed class OracleApInvoiceService(
                     connection.CreateCommand()
             )
             {
+                Configure(command);
                 command.Transaction =
                     transaction;
 
@@ -358,7 +437,9 @@ public sealed class OracleApInvoiceService(
                     command,
                     "payment_method",
                     OracleDbType.Varchar2,
-                    DbValue(config["ORACLE_AP_PAYMENT_METHOD_LOOKUP_CODE"])
+                    string.IsNullOrWhiteSpace(paymentMethod)
+                        ? DBNull.Value
+                        : paymentMethod
                 );
 
                 Add(
@@ -436,6 +517,8 @@ public sealed class OracleApInvoiceService(
 
                 await using var lineCommand =
                     connection.CreateCommand();
+
+                Configure(lineCommand);
 
                 lineCommand.Transaction =
                     transaction;
@@ -620,6 +703,8 @@ public sealed class OracleApInvoiceService(
 
         await using var command =
             connection.CreateCommand();
+
+        Configure(command);
 
         command.BindByName =
             true;
@@ -1153,6 +1238,8 @@ public sealed class OracleApInvoiceService(
         await using var command =
             connection.CreateCommand();
 
+        Configure(command);
+
         command.BindByName =
             true;
 
@@ -1294,16 +1381,17 @@ public sealed class OracleApInvoiceService(
                     timeoutSeconds
                 );
 
-        while (
-            DateTimeOffset.UtcNow <
-            deadline
-        )
+        var polls = 0;
+        while (DateTimeOffset.UtcNow < deadline)
         {
+            polls++;
             await using var connection =
                 await OpenAsync(ct);
 
             await using var command =
                 connection.CreateCommand();
+
+            Configure(command);
 
             command.BindByName =
                 true;
@@ -1373,6 +1461,15 @@ public sealed class OracleApInvoiceService(
 
                     return;
                 }
+
+                if (string.Equals(phase, "C", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Explicitly name the EBS terminal states in the error.
+                    // C/E = Error, C/X = Cancelled, and C/T = Terminated.
+                    throw new OracleApBusinessException(
+                        $"APXIIMPT request {requestId} finished in terminal " +
+                        $"state phase '{phase}', status '{status}' (poll {polls}).");
+                }
             }
 
             await Task.Delay(
@@ -1393,6 +1490,142 @@ public sealed class OracleApInvoiceService(
     // AP_INTERFACE_REJECTIONS
     // ============================================================
 
+    public async Task<OracleApInterfaceOutcome> GetInterfaceOutcomeAsync(decimal vendorId, string invoiceNumber, CancellationToken ct)
+    {
+        var importedInvoiceId = await FindImportedInvoiceIdAsync(vendorId, invoiceNumber, ct);
+        if (importedInvoiceId.HasValue)
+            return new OracleApInterfaceOutcome(importedInvoiceId, null, null, Array.Empty<string>());
+
+        await using var connection = await OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+
+        Configure(command);
+        command.BindByName = true;
+        command.CommandText = """
+            SELECT invoice_id, status
+            FROM ap_invoices_interface
+            WHERE vendor_id = :vendor_id
+              AND UPPER(TRIM(invoice_num)) = UPPER(TRIM(:invoice_num))
+              AND ROWNUM = 1
+            """;
+        Add(command, "vendor_id", OracleDbType.Decimal, vendorId);
+        Add(command, "invoice_num", OracleDbType.Varchar2, invoiceNumber);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+            return new OracleApInterfaceOutcome(null, null, null, Array.Empty<string>());
+
+        var interfaceInvoiceId = Convert.ToInt64(reader.GetValue(0));
+        var interfaceStatus = Convert.ToString(reader.GetValue(1))?.Trim();
+        var rejections = await GetInterfaceRejectionsAsync(interfaceInvoiceId, ct);
+        logger.LogInformation("Oracle AP outcome resolved. InvoiceNumber={InvoiceNumber} InterfaceInvoiceId={InterfaceInvoiceId} InterfaceStatus={InterfaceStatus} RejectionReason={RejectionReason}", invoiceNumber, interfaceInvoiceId, interfaceStatus ?? "<null>", rejections.Count == 0 ? "<none>" : string.Join("; ", rejections));
+        return new OracleApInterfaceOutcome(null, interfaceInvoiceId, interfaceStatus, rejections);
+    }
+
+    private async Task<string?> GetInterfaceStatusAsync(
+        long interfaceInvoiceId,
+        CancellationToken ct)
+    {
+        await using var connection = await OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+
+        Configure(command);
+
+        command.BindByName = true;
+        command.CommandText =
+            """
+            SELECT status
+            FROM ap_invoices_interface
+            WHERE invoice_id = :invoice_id
+            """;
+
+        Add(command, "invoice_id", OracleDbType.Int64, interfaceInvoiceId);
+
+        var value = await command.ExecuteScalarAsync(ct);
+        var status = value is null || value == DBNull.Value
+            ? null
+            : Convert.ToString(value)?.Trim();
+
+        logger.LogInformation(
+            "Oracle AP interface status resolved. InterfaceInvoiceId={InterfaceInvoiceId} Status={InterfaceStatus}",
+            interfaceInvoiceId,
+            status ?? "<null>");
+
+        return status;
+    }
+
+    // ============================================================
+    // PAYMENT METHOD RESOLUTION
+    // ============================================================
+
+    private async Task<string?> ResolvePaymentMethodAsync(
+        long vendorSiteId,
+        long orgId,
+        CancellationToken ct)
+    {
+        await using var connection = await OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+
+        Configure(command);
+
+        command.BindByName = true;
+        command.CommandText =
+            """
+            SELECT payment_method_code
+            FROM
+            (
+                SELECT
+                    COALESCE(
+                        NULLIF(TRIM(pvs.payment_method_lookup_code), ''),
+                        NULLIF(TRIM(iep.default_payment_method_code), '')
+                    ) AS payment_method_code
+                FROM po_vendor_sites_all pvs
+                LEFT JOIN iby_external_payees_v iep
+                    ON iep.supplier_site_id = pvs.vendor_site_id
+                    AND iep.org_id = pvs.org_id
+                    AND iep.payment_function = 'PAYABLES_DISBURSEMENTS'
+                    AND iep.inactive_date IS NULL
+                WHERE pvs.vendor_site_id = :vendor_site_id
+                  AND pvs.org_id = :org_id
+            ) candidate
+            WHERE payment_method_code IS NOT NULL
+              AND EXISTS
+              (
+                  SELECT 1
+                  FROM iby_payment_methods_vl method
+                  WHERE method.payment_method_code = candidate.payment_method_code
+                    AND method.inactive_date IS NULL
+              )
+            """;
+
+        Add(command, "vendor_site_id", OracleDbType.Int64, vendorSiteId);
+        Add(command, "org_id", OracleDbType.Int64, orgId);
+
+        var value = await command.ExecuteScalarAsync(ct);
+        var paymentMethod = value is null || value == DBNull.Value
+            ? null
+            : Convert.ToString(value)?.Trim();
+
+        if (string.IsNullOrWhiteSpace(paymentMethod))
+        {
+            logger.LogWarning(
+                "No valid Oracle payment method resolved. VendorSiteId={VendorSiteId} OrgId={OrgId}. " +
+                "PAYMENT_METHOD_LOOKUP_CODE will be sent as NULL so Oracle AP can apply its configured defaults.",
+                vendorSiteId,
+                orgId
+            );
+
+            return null;
+        }
+
+        logger.LogInformation(
+            "Oracle payment method resolved. VendorSiteId={VendorSiteId} OrgId={OrgId} PaymentMethod={PaymentMethod}",
+            vendorSiteId,
+            orgId,
+            paymentMethod);
+
+        return paymentMethod;
+    }
+
     private async Task<IReadOnlyList<string>>
         GetInterfaceRejectionsAsync(
             long interfaceInvoiceId,
@@ -1403,6 +1636,8 @@ public sealed class OracleApInvoiceService(
 
         await using var command =
             connection.CreateCommand();
+
+        Configure(command);
 
         command.BindByName =
             true;
@@ -1483,6 +1718,8 @@ public sealed class OracleApInvoiceService(
 
         await using var command =
             connection.CreateCommand();
+
+        Configure(command);
 
         command.BindByName =
             true;
@@ -1575,6 +1812,8 @@ public sealed class OracleApInvoiceService(
         using var transaction =
             connection.BeginTransaction();
 
+        var verificationTargets = new List<(OracleApDocument Document, OracleApAttachmentMetadata Metadata)>();
+
         try
         {
             await InitializeAppsContextAsync(
@@ -1596,21 +1835,30 @@ public sealed class OracleApInvoiceService(
                         "INVOICE" =>
                             Get(
                                 "ORACLE_AP_INVOICE_COPY_CATEGORY",
-                                "INVOICE COPY"
+                                "Quick Invoices"
                             ),
 
                         "DELIVERY_CHALLAN" =>
                             Get(
                                 "ORACLE_AP_DELIVERY_CHALLAN_CATEGORY",
-                                "DELIVERY CHALLAN"
+                                "Quick Invoices"
                             ),
 
                         _ =>
                             Get(
                                 "ORACLE_AP_SUPPORTING_DOCUMENT_CATEGORY",
-                                "MISCELLANEOUS"
+                                "Quick Invoices"
                             )
                     };
+
+                var metadata =
+                    await ResolveAttachmentMetadataAsync(
+                        connection,
+                        transaction,
+                        oracleInvoiceId,
+                        category,
+                        ct
+                    );
 
                 var exists =
                     await AttachmentExistsAsync(
@@ -1618,23 +1866,33 @@ public sealed class OracleApInvoiceService(
                         transaction,
                         oracleInvoiceId,
                         document.FileName,
-                        category,
+                        metadata.CategoryId,
                         ct
                     );
 
                 if (exists)
                 {
+                    logger.LogInformation("Existing Oracle AP attachment recovered. OracleInvoiceId={OracleInvoiceId}, FileName={FileName}, CategoryId={CategoryId}", oracleInvoiceId, document.FileName, metadata.CategoryId);
+                    verificationTargets.Add((document, metadata));
                     continue;
                 }
 
                 logger.LogInformation(
                     "Creating Oracle AP invoice attachment. " +
                     "OracleInvoiceId={OracleInvoiceId}, FileName={FileName}, " +
-                    "DocumentType={DocumentType}, RequestedCategoryName={RequestedCategoryName}",
+                    "DocumentType={DocumentType}, ConfiguredCategory={ConfiguredCategory}, ResolvedCategoryId={ResolvedCategoryId}, " +
+                    "ResolvedInternalName={ResolvedInternalName}, ResolvedUserName={ResolvedUserName}, " +
+                    "AttachmentFunctionId={AttachmentFunctionId}, AttachmentFunctionName={AttachmentFunctionName}, " +
+                    "AttachmentFunctionType={AttachmentFunctionType}, SecurityType={SecurityType}, SecurityId={SecurityId}, DatatypeId={DatatypeId}",
                     oracleInvoiceId,
                     document.FileName,
                     document.DocumentType,
-                    category
+                    metadata.ConfiguredCategory,
+                    metadata.CategoryId, metadata.InternalName, metadata.UserName,
+                    metadata.AttachmentFunctionId, metadata.AttachmentFunctionName, metadata.AttachmentFunctionType,
+                    metadata.SecurityType,
+                    metadata.SecurityId,
+                    metadata.DatatypeId
                 );
 
                 await AttachSingleFileAsync(
@@ -1642,17 +1900,29 @@ public sealed class OracleApInvoiceService(
                     transaction,
                     oracleInvoiceId,
                     document,
-                    category,
+                    metadata,
                     ct
                 );
+                verificationTargets.Add((document, metadata));
             }
 
             transaction.Commit();
+            logger.LogInformation("Oracle AP attachment creation transaction committed. OracleInvoiceId={OracleInvoiceId}", oracleInvoiceId);
         }
         catch
         {
             transaction.Rollback();
             throw;
+        }
+
+        // AOL package operations can use parallel/direct-path internals. Do
+        // not read their modified objects until after the creating transaction
+        // commits; ORA-12838 otherwise prevents the read and masks success.
+        foreach (var target in verificationTargets)
+        {
+            logger.LogInformation("Starting post-commit Forms attachment verification. OracleInvoiceId={OracleInvoiceId}, FileName={FileName}", oracleInvoiceId, target.Document.FileName);
+            await VerifyAttachmentAfterCommitAsync(oracleInvoiceId, target.Document, target.Metadata, ct);
+            logger.LogInformation("Post-commit Forms attachment verification succeeded. OracleInvoiceId={OracleInvoiceId}, FileName={FileName}", oracleInvoiceId, target.Document.FileName);
         }
     }
 
@@ -1661,11 +1931,13 @@ public sealed class OracleApInvoiceService(
         OracleTransaction transaction,
         long oracleInvoiceId,
         string fileName,
-        string categoryName,
+        long categoryId,
         CancellationToken ct)
     {
         await using var command =
             connection.CreateCommand();
+
+        Configure(command);
 
         command.Transaction =
             transaction;
@@ -1686,12 +1958,6 @@ public sealed class OracleApInvoiceService(
               ON
                 fdt.document_id =
                 fad.document_id
-
-            JOIN
-                fnd_document_categories_vl fdc
-              ON
-                fdc.category_id =
-                fad.category_id
 
             WHERE
                 fad.entity_name =
@@ -1715,32 +1981,7 @@ public sealed class OracleApInvoiceService(
                     :file_name
                 )
 
-            AND
-                (
-                    UPPER(
-                        TRIM(
-                            fdc.name
-                        )
-                    )
-                    =
-                    UPPER(
-                        TRIM(
-                            :category_name
-                        )
-                    )
-                OR
-                    UPPER(
-                        TRIM(
-                            fdc.user_name
-                        )
-                    )
-                    =
-                    UPPER(
-                        TRIM(
-                            :category_name
-                        )
-                    )
-                )
+            AND fad.category_id = :category_id
 
             AND
                 fdt.language =
@@ -1765,9 +2006,9 @@ public sealed class OracleApInvoiceService(
 
         Add(
             command,
-            "category_name",
-            OracleDbType.Varchar2,
-            categoryName
+            "category_id",
+            OracleDbType.Int64,
+            categoryId
         );
 
         return
@@ -1778,12 +2019,219 @@ public sealed class OracleApInvoiceService(
             0;
     }
 
+    private async Task VerifyAttachmentAfterCommitAsync(
+        long oracleInvoiceId,
+        OracleApDocument document,
+        OracleApAttachmentMetadata metadata,
+        CancellationToken ct)
+    {
+        await using var connection = await OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        Configure(command);
+        command.BindByName = true;
+        command.CommandText =
+            """
+            SELECT fad.attached_document_id, fd.document_id, fd.media_id,
+                   fd.file_name, fdt.language, fdt.source_lang,
+                   fdfv.file_name
+              FROM fnd_attached_documents fad
+              JOIN fnd_documents fd ON fd.document_id = fad.document_id
+              JOIN fnd_documents_tl fdt ON fdt.document_id = fd.document_id
+              JOIN fnd_attached_docs_form_vl fdfv
+                ON fdfv.attached_document_id = fad.attached_document_id
+             WHERE fad.entity_name = 'AP_INVOICES'
+               AND fad.pk1_value = TO_CHAR(:invoice_id)
+               AND fad.category_id = :category_id
+               AND UPPER(fd.file_name) = UPPER(:file_name)
+               AND fd.datatype_id = :datatype_id
+               AND fd.security_type = :security_type
+               AND NVL(fd.security_id, -1) = NVL(:security_id, -1)
+               AND fdt.language = :language
+               AND fdfv.function_name = :function_name
+               AND fdfv.function_type = :function_type
+               AND fdfv.entity_name = 'AP_INVOICES'
+               AND fdfv.pk1_value = TO_CHAR(:invoice_id)
+               AND fdfv.category_id = :category_id
+               AND fdfv.datatype_id = :datatype_id
+               AND fdfv.security_type = :security_type
+               AND NVL(fdfv.security_id, -1) = NVL(:security_id, -1)
+               AND UPPER(fdfv.file_name) = UPPER(:file_name)
+            """;
+        Add(command, "invoice_id", OracleDbType.Int64, oracleInvoiceId);
+        Add(command, "category_id", OracleDbType.Int64, metadata.CategoryId);
+        Add(command, "file_name", OracleDbType.Varchar2, document.FileName);
+        Add(command, "datatype_id", OracleDbType.Int32, metadata.DatatypeId);
+        Add(command, "security_type", OracleDbType.Int32, metadata.SecurityType);
+        Add(command, "security_id", OracleDbType.Int64, metadata.SecurityId);
+        Add(command, "language", OracleDbType.Varchar2, metadata.Language);
+        Add(command, "function_name", OracleDbType.Varchar2, metadata.AttachmentFunctionName);
+        Add(command, "function_type", OracleDbType.Varchar2, metadata.AttachmentFunctionType);
+
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+            throw new OracleApBusinessException(
+                $"Oracle AP attachment verification failed after commit for invoice {oracleInvoiceId}, file '{document.FileName}'. " +
+                "A matching APXINWKB Forms-view attachment was not found; retry will reconcile the existing attachment without inserting a duplicate.");
+
+        logger.LogInformation(
+            "Oracle AP attachment verification details. OracleInvoiceId={OracleInvoiceId}, FileName={FileName}, AttachedDocumentId={AttachedDocumentId}, DocumentId={DocumentId}, MediaId={MediaId}, DocumentFileName={DocumentFileName}, Language={Language}, SourceLanguage={SourceLanguage}, FormsFileName={FormsFileName}",
+            oracleInvoiceId, document.FileName, reader.GetValue(0), reader.GetValue(1), reader.GetValue(2), reader.GetValue(3), reader.GetValue(4), reader.GetValue(5), reader.GetValue(6));
+    }
+
+    // The paperclip window does not display every FND_ATTACHED_DOCUMENTS row.
+    // It only displays categories enabled on the attachment function/block that
+    // owns AP_INVOICES.  Resolve that setup instead of guessing category,
+    // datatype, or security values from an unrelated historical attachment.
+    private async Task<OracleApAttachmentMetadata> ResolveAttachmentMetadataAsync(
+        OracleConnection connection,
+        OracleTransaction transaction,
+        long oracleInvoiceId,
+        string requestedCategory,
+        CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        Configure(command);
+        command.Transaction = transaction;
+        command.BindByName = true;
+        command.CommandText =
+            """
+            SELECT DISTINCT
+                fdc.category_id,
+                fdc.name,
+                fdc.user_name,
+                faf.attachment_function_id,
+                faf.function_name,
+                faf.function_type,
+                fab.security_type,
+                ai.org_id,
+                ai.set_of_books_id
+            FROM fnd_attachment_functions faf
+            JOIN fnd_attachment_blocks fab
+              ON fab.attachment_function_id = faf.attachment_function_id
+            JOIN fnd_attachment_blk_entities fabe
+              ON fabe.attachment_blk_id = fab.attachment_blk_id
+            JOIN fnd_doc_category_usages fdcu
+              ON fdcu.attachment_function_id = faf.attachment_function_id
+            JOIN fnd_document_categories_vl fdc
+              ON fdc.category_id = fdcu.category_id
+            JOIN ap_invoices_all ai
+              ON ai.invoice_id = :invoice_id
+            WHERE faf.function_name = :function_name
+              AND faf.function_type = :function_type
+              AND faf.enabled_flag = 'Y'
+              AND fabe.data_object_code = 'AP_INVOICES'
+              AND fabe.query_permission_type <> 'N'
+              AND fdcu.enabled_flag = 'Y'
+              AND NVL(fdc.start_date_active, TRUNC(SYSDATE)) <= TRUNC(SYSDATE)
+              AND (fdc.end_date_active IS NULL OR fdc.end_date_active >= TRUNC(SYSDATE))
+              AND (UPPER(TRIM(fdc.name)) = UPPER(TRIM(:category))
+                   OR UPPER(TRIM(fdc.user_name)) = UPPER(TRIM(:category)))
+            """;
+
+        Add(command, "invoice_id", OracleDbType.Int64, oracleInvoiceId);
+        Add(command, "function_name", OracleDbType.Varchar2,
+            Get("ORACLE_AP_INVOICE_ATTACHMENT_FUNCTION", "APXINWKB"));
+        Add(command, "function_type", OracleDbType.Varchar2,
+            Get("ORACLE_AP_INVOICE_ATTACHMENT_FUNCTION_TYPE", "O"));
+        Add(command, "category", OracleDbType.Varchar2, requestedCategory);
+
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        var matches = new List<(long CategoryId, string InternalName, string UserName, long AttachmentFunctionId, string AttachmentFunctionName, string AttachmentFunctionType, int SecurityType, long? OrgId, long? SetOfBooksId)>();
+        while (await reader.ReadAsync(ct))
+        {
+            matches.Add((
+                Convert.ToInt64(reader.GetValue(0)),
+                reader.GetString(1),
+                reader.GetString(2),
+                Convert.ToInt64(reader.GetValue(3)),
+                reader.GetString(4),
+                reader.GetString(5),
+                Convert.ToInt32(reader.GetValue(6)),
+                reader.IsDBNull(7) ? null : Convert.ToInt64(reader.GetValue(7)),
+                reader.IsDBNull(8) ? null : Convert.ToInt64(reader.GetValue(8))));
+        }
+
+        if (matches.Count == 0)
+            throw new OracleApBusinessException(
+                $"Oracle attachment category '{requestedCategory}' is not enabled for AP_INVOICES on attachment function " +
+                $"'{Get("ORACLE_AP_INVOICE_ATTACHMENT_FUNCTION", "APXINWKB")}'. Configure an enabled category for the Payables Invoice Workbench.");
+
+        var match = matches[0];
+        if (matches.Any(x => x.CategoryId != match.CategoryId || x.SecurityType != match.SecurityType))
+            throw new OracleApBusinessException(
+                $"Oracle attachment configuration for AP_INVOICES category '{requestedCategory}' is ambiguous. " +
+                "Resolve the duplicate enabled attachment-function/block setup before retrying.");
+
+        var fileDatatypeId = await ResolveFileDatatypeIdAsync(connection, transaction, ct);
+
+        long? securityId = match.SecurityType switch
+        {
+            1 => match.OrgId,
+            2 => match.SetOfBooksId,
+            3 => GetOptionalLong("ORACLE_AP_INVOICE_ATTACHMENT_SECURITY_ID"),
+            4 => null,
+            _ => throw new OracleApBusinessException(
+                $"Unsupported AP_INVOICES attachment security type {match.SecurityType} on the configured Invoice Workbench attachment block.")
+        };
+
+        if (match.SecurityType != 4 && !securityId.HasValue)
+            throw new OracleApBusinessException(
+                $"AP_INVOICES attachment security type {match.SecurityType} requires a security ID, but none could be derived for Oracle invoice {oracleInvoiceId}. " +
+                "For business-unit security, configure ORACLE_AP_INVOICE_ATTACHMENT_SECURITY_ID.");
+
+        return new OracleApAttachmentMetadata(
+            requestedCategory,
+            match.CategoryId,
+            match.InternalName,
+            match.UserName,
+            match.AttachmentFunctionId,
+            match.AttachmentFunctionName,
+            match.AttachmentFunctionType,
+            fileDatatypeId,
+            match.SecurityType,
+            securityId,
+            Get("ORACLE_AP_ATTACHMENT_LANGUAGE", "US").ToUpperInvariant());
+    }
+
+    // FILE is the AOL document datatype for a binary FND_LOBS payload. It is
+    // configured independently from categories in FND_DOCUMENT_DATATYPES.
+    private async Task<int> ResolveFileDatatypeIdAsync(
+        OracleConnection connection,
+        OracleTransaction transaction,
+        CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        Configure(command);
+        command.Transaction = transaction;
+        command.BindByName = true;
+        command.CommandText =
+            """
+            SELECT datatype_id
+              FROM fnd_document_datatypes
+             WHERE UPPER(name) = 'FILE'
+               AND NVL(start_date_active, TRUNC(SYSDATE)) <= TRUNC(SYSDATE)
+               AND (end_date_active IS NULL OR end_date_active >= TRUNC(SYSDATE))
+            """;
+
+        var datatypeIds = new List<int>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            datatypeIds.Add(Convert.ToInt32(reader.GetValue(0)));
+
+        if (datatypeIds.Count != 1)
+            throw new OracleApBusinessException(
+                $"Expected exactly one active Oracle AOL FILE document datatype; found {datatypeIds.Count}. " +
+                "Correct FND_DOCUMENT_DATATYPES setup before retrying attachment synchronization.");
+
+        return datatypeIds[0];
+    }
+
     private async Task AttachSingleFileAsync(
         OracleConnection connection,
         OracleTransaction transaction,
         long oracleInvoiceId,
         OracleApDocument document,
-        string categoryName,
+        OracleApAttachmentMetadata metadata,
         CancellationToken ct)
     {
         var fileFormat =
@@ -1794,6 +2242,8 @@ public sealed class OracleApInvoiceService(
 
         await using var command =
             connection.CreateCommand();
+
+        Configure(command);
 
         command.Transaction =
             transaction;
@@ -1806,37 +2256,11 @@ public sealed class OracleApInvoiceService(
             DECLARE
                 l_media_id NUMBER;
                 l_doc_id NUMBER;
-                l_category_id NUMBER;
                 l_seq_num NUMBER;
+                l_rowid VARCHAR2(64);
+                l_attached_document_id NUMBER;
 
             BEGIN
-                BEGIN
-                    SELECT
-                        category_id
-                    INTO
-                        l_category_id
-                    FROM
-                        fnd_document_categories_vl
-                    WHERE
-                        (
-                            UPPER(TRIM(name)) =
-                            UPPER(TRIM(:p_category_name))
-                        OR
-                            UPPER(TRIM(user_name)) =
-                            UPPER(TRIM(:p_category_name))
-                        )
-                    AND
-                        ROWNUM = 1;
-
-                EXCEPTION
-                    WHEN NO_DATA_FOUND THEN
-                        RAISE_APPLICATION_ERROR(
-                            -20001,
-                            'Attachment category not found in Oracle: ' ||
-                            :p_category_name
-                        );
-                END;
-
                 l_media_id :=
                     fnd_lobs_s.NEXTVAL;
 
@@ -1850,7 +2274,9 @@ public sealed class OracleApInvoiceService(
                     upload_date,
                     expiration_date,
                     program_name,
-                    program_tag
+                    program_tag,
+                    language,
+                    oracle_charset
                 )
                 VALUES
                 (
@@ -1862,73 +2288,10 @@ public sealed class OracleApInvoiceService(
                     SYSDATE,
                     NULL,
                     'BUSINESS_PORTAL',
-                    'AP_INVOICE_ATTACH'
+                    'AP_INVOICE_ATTACH',
+                    :p_language,
+                    'UTF8'
                 );
-
-                l_doc_id :=
-                    fnd_documents_s.NEXTVAL;
-
-                INSERT INTO fnd_documents
-                (
-                    document_id,
-                    category_id,
-                    security_type,
-                    publish_flag,
-                    datatype_id,
-                    usage_type,
-                    media_id,
-                    creation_date,
-                    created_by,
-                    last_update_date,
-                    last_updated_by,
-                    last_update_login
-                )
-                VALUES
-                (
-                    l_doc_id,
-                    l_category_id,
-                    1,
-                    'Y',
-                    5,
-                    'O',
-                    l_media_id,
-                    SYSDATE,
-                    fnd_global.user_id,
-                    SYSDATE,
-                    fnd_global.user_id,
-                    fnd_global.login_id
-                );
-
-                INSERT INTO fnd_documents_tl
-                (
-                    document_id,
-                    language,
-                    source_lang,
-                    description,
-                    file_name,
-                    media_id,
-                    creation_date,
-                    created_by,
-                    last_update_date,
-                    last_updated_by,
-                    last_update_login
-                )
-                SELECT
-                    l_doc_id,
-                    l.language_code,
-                    USERENV('LANG'),
-                    :p_description,
-                    :p_file_name,
-                    l_media_id,
-                    SYSDATE,
-                    fnd_global.user_id,
-                    SYSDATE,
-                    fnd_global.user_id,
-                    fnd_global.login_id
-                FROM
-                    fnd_languages l
-                WHERE
-                    l.installed_flag IN ('B', 'I');
 
                 SELECT
                     NVL(MAX(seq_num), 0) + 1
@@ -1941,45 +2304,92 @@ public sealed class OracleApInvoiceService(
                 AND
                     pk1_value = TO_CHAR(:p_invoice_id);
 
-                INSERT INTO fnd_attached_documents
-                (
-                    attached_document_id,
-                    document_id,
-                    entity_name,
-                    pk1_value,
-                    category_id,
-                    seq_num,
-                    automatically_added_flag,
-                    creation_date,
-                    created_by,
-                    last_update_date,
-                    last_updated_by,
-                    last_update_login
-                )
-                VALUES
-                (
-                    fnd_attached_documents_s.NEXTVAL,
-                    l_doc_id,
-                    'AP_INVOICES',
-                    TO_CHAR(:p_invoice_id),
-                    l_category_id,
-                    l_seq_num,
-                    'N',
-                    SYSDATE,
-                    fnd_global.user_id,
-                    SYSDATE,
-                    fnd_global.user_id,
-                    fnd_global.login_id
-                );
+                l_doc_id := fnd_documents_s.NEXTVAL;
+                l_attached_document_id := fnd_attached_documents_s.NEXTVAL;
+
+                fnd_documents_pkg.insert_row(
+                    x_rowid => l_rowid,
+                    x_document_id => l_doc_id,
+                    x_creation_date => SYSDATE,
+                    x_created_by => fnd_global.user_id,
+                    x_last_update_date => SYSDATE,
+                    x_last_updated_by => fnd_global.user_id,
+                    x_last_update_login => fnd_global.login_id,
+                    x_datatype_id => :p_datatype_id,
+                    x_category_id => :p_category_id,
+                    x_security_type => :p_security_type,
+                    x_security_id => :p_security_id,
+                    x_publish_flag => 'Y',
+                    x_usage_type => 'O',
+                    x_language => :p_language,
+                    x_description => :p_description,
+                    x_file_name => :p_file_name,
+                    x_media_id => l_media_id);
+
+                fnd_documents_pkg.add_language;
+
+                fnd_attached_documents_pkg.insert_row(
+                    x_rowid => l_rowid,
+                    x_attached_document_id => l_attached_document_id,
+                    x_document_id => l_doc_id,
+                    x_creation_date => SYSDATE,
+                    x_created_by => fnd_global.user_id,
+                    x_last_update_date => SYSDATE,
+                    x_last_updated_by => fnd_global.user_id,
+                    x_last_update_login => fnd_global.login_id,
+                    x_seq_num => l_seq_num,
+                    x_entity_name => 'AP_INVOICES',
+                    x_column1 => NULL,
+                    x_pk1_value => TO_CHAR(:p_invoice_id),
+                    x_pk2_value => NULL,
+                    x_pk3_value => NULL,
+                    x_pk4_value => NULL,
+                    x_pk5_value => NULL,
+                    x_automatically_added_flag => 'N',
+                    x_datatype_id => :p_datatype_id,
+                    x_category_id => :p_category_id,
+                    x_security_type => :p_security_type,
+                    x_security_id => :p_security_id,
+                    x_publish_flag => 'Y',
+                    x_usage_type => 'O',
+                    x_language => :p_language,
+                    x_description => :p_description,
+                    x_file_name => :p_file_name,
+                    x_media_id => l_media_id,
+                    x_doc_attribute_category => NULL,
+                    x_doc_attribute1 => NULL,
+                    x_doc_attribute2 => NULL,
+                    x_doc_attribute3 => NULL,
+                    x_doc_attribute4 => NULL,
+                    x_doc_attribute5 => NULL,
+                    x_doc_attribute6 => NULL,
+                    x_doc_attribute7 => NULL,
+                    x_doc_attribute8 => NULL,
+                    x_doc_attribute9 => NULL,
+                    x_doc_attribute10 => NULL,
+                    x_doc_attribute11 => NULL,
+                    x_doc_attribute12 => NULL,
+                    x_doc_attribute13 => NULL,
+                    x_doc_attribute14 => NULL,
+                    x_doc_attribute15 => NULL,
+                    x_create_doc => 'N');
+
+                :p_media_id := l_media_id;
+                :p_document_id := l_doc_id;
+                :p_attached_document_id := l_attached_document_id;
 
             END;
             """;
 
-        Add(command, "p_category_name", OracleDbType.Varchar2, categoryName);
         Add(command, "p_file_name", OracleDbType.Varchar2, document.FileName);
         Add(command, "p_content_type", OracleDbType.Varchar2, document.ContentType);
         Add(command, "p_file_format", OracleDbType.Varchar2, fileFormat);
         Add(command, "p_blob_data", OracleDbType.Blob, document.Content);
+        Add(command, "p_category_id", OracleDbType.Int64, metadata.CategoryId);
+        Add(command, "p_datatype_id", OracleDbType.Int32, metadata.DatatypeId);
+        Add(command, "p_security_type", OracleDbType.Int32, metadata.SecurityType);
+        Add(command, "p_security_id", OracleDbType.Int64, metadata.SecurityId);
+        Add(command, "p_language", OracleDbType.Varchar2, metadata.Language);
 
         Add(
             command,
@@ -1991,18 +2401,36 @@ public sealed class OracleApInvoiceService(
         );
 
         Add(command, "p_invoice_id", OracleDbType.Int64, oracleInvoiceId);
+        var mediaId = command.Parameters.Add("p_media_id", OracleDbType.Int64, ParameterDirection.Output);
+        var documentId = command.Parameters.Add("p_document_id", OracleDbType.Int64, ParameterDirection.Output);
+        var attachedDocumentId = command.Parameters.Add("p_attached_document_id", OracleDbType.Int64, ParameterDirection.Output);
 
         logger.LogInformation(
             "Inserting Oracle FND_LOBS attachment. " +
             "OracleInvoiceId={OracleInvoiceId}, FileName={FileName}, " +
-            "ContentType={ContentType}, FileFormat={FileFormat}",
+            "ContentType={ContentType}, FileFormat={FileFormat}, ConfiguredCategory={ConfiguredCategory}, ResolvedCategoryId={ResolvedCategoryId}, " +
+            "ResolvedInternalName={ResolvedInternalName}, ResolvedUserName={ResolvedUserName}, AttachmentFunctionId={AttachmentFunctionId}, " +
+            "AttachmentFunctionName={AttachmentFunctionName}, AttachmentFunctionType={AttachmentFunctionType}, SecurityType={SecurityType}, SecurityId={SecurityId}, DatatypeId={DatatypeId}",
             oracleInvoiceId,
             document.FileName,
             document.ContentType,
-            fileFormat
+            fileFormat,
+            metadata.ConfiguredCategory, metadata.CategoryId, metadata.InternalName, metadata.UserName,
+            metadata.AttachmentFunctionId, metadata.AttachmentFunctionName, metadata.AttachmentFunctionType,
+            metadata.SecurityType,
+            metadata.SecurityId,
+            metadata.DatatypeId
         );
 
         await command.ExecuteNonQueryAsync(ct);
+
+        logger.LogInformation(
+            "Oracle AP invoice attachment created. OracleInvoiceId={OracleInvoiceId}, DocumentType={DocumentType}, FileName={FileName}, TLFileName={TLFileName}, Language={Language}, ContentType={ContentType}, ConfiguredCategory={ConfiguredCategory}, ResolvedCategoryId={ResolvedCategoryId}, ResolvedInternalName={ResolvedInternalName}, ResolvedUserName={ResolvedUserName}, AttachmentFunctionId={AttachmentFunctionId}, AttachmentFunctionName={AttachmentFunctionName}, AttachmentFunctionType={AttachmentFunctionType}, SecurityType={SecurityType}, SecurityId={SecurityId}, DatatypeId={DatatypeId}, MediaId={MediaId}, DocumentId={DocumentId}, AttachedDocumentId={AttachedDocumentId}",
+            oracleInvoiceId, document.DocumentType, document.FileName, null, metadata.Language, document.ContentType,
+            metadata.ConfiguredCategory, metadata.CategoryId, metadata.InternalName, metadata.UserName,
+            metadata.AttachmentFunctionId, metadata.AttachmentFunctionName, metadata.AttachmentFunctionType,
+            metadata.SecurityType, metadata.SecurityId,
+            metadata.DatatypeId, mediaId.Value, documentId.Value, attachedDocumentId.Value);
     }
 
     // ============================================================
@@ -2022,6 +2450,7 @@ public sealed class OracleApInvoiceService(
                 connection.CreateCommand()
         )
         {
+            Configure(lineCommand);
             lineCommand.Transaction =
                 transaction;
 
@@ -2063,6 +2492,7 @@ public sealed class OracleApInvoiceService(
                 connection.CreateCommand()
         )
         {
+            Configure(headerCommand);
             headerCommand.Transaction =
                 transaction;
 
@@ -2102,6 +2532,8 @@ public sealed class OracleApInvoiceService(
     {
         await using var command =
             connection.CreateCommand();
+
+        Configure(command);
 
         command.Transaction =
             transaction;
@@ -2171,6 +2603,8 @@ public sealed class OracleApInvoiceService(
         await using var command =
             connection.CreateCommand();
 
+        Configure(command);
+
         command.Transaction =
             transaction;
 
@@ -2193,6 +2627,7 @@ public sealed class OracleApInvoiceService(
         string step,
         Func<Task> action)
     {
+        var stopwatch = Stopwatch.StartNew();
         logger.LogInformation(
             "Oracle AP step started: {Step}",
             step
@@ -2203,8 +2638,9 @@ public sealed class OracleApInvoiceService(
             await action();
 
             logger.LogInformation(
-                "Oracle AP step completed: {Step}",
-                step
+                "Oracle AP step completed: {Step}. DurationMs={DurationMs}",
+                step,
+                stopwatch.ElapsedMilliseconds
             );
         }
         catch (OracleException ex)
@@ -2233,6 +2669,7 @@ public sealed class OracleApInvoiceService(
         string step,
         Func<Task<T>> action)
     {
+        var stopwatch = Stopwatch.StartNew();
         logger.LogInformation(
             "Oracle AP step started: {Step}",
             step
@@ -2244,8 +2681,9 @@ public sealed class OracleApInvoiceService(
                 await action();
 
             logger.LogInformation(
-                "Oracle AP step completed: {Step}",
-                step
+                "Oracle AP step completed: {Step}. DurationMs={DurationMs}",
+                step,
+                stopwatch.ElapsedMilliseconds
             );
 
             return result;
@@ -2318,6 +2756,15 @@ public sealed class OracleApInvoiceService(
         await connection.OpenAsync(ct);
 
         return connection;
+    }
+
+    // OracleCommand defaults to an unlimited timeout.  A cancellation token is
+    // not sufficient for every provider/network failure, so set a finite
+    // provider-side timeout as well. Callers that create commands use this
+    // helper before executing them.
+    private void Configure(OracleCommand command)
+    {
+        command.CommandTimeout = GetInt("ORACLE_AP_COMMAND_TIMEOUT_SECONDS", 60);
     }
 
     // ============================================================
@@ -2522,4 +2969,17 @@ public sealed class OracleApInvoiceService(
             ??
             DBNull.Value;
     }
+
+    private sealed record OracleApAttachmentMetadata(
+        string ConfiguredCategory,
+        long CategoryId,
+        string InternalName,
+        string UserName,
+        long AttachmentFunctionId,
+        string AttachmentFunctionName,
+        string AttachmentFunctionType,
+        int DatatypeId,
+        int SecurityType,
+        long? SecurityId,
+        string Language);
 }

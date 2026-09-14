@@ -67,6 +67,7 @@ public static class AuthEndpoints
                 EmailOtpSender emailSender,
                 IConfiguration config,
                 HttpContext http,
+                ILogger<Program> logger,
                 CancellationToken ct) =>
             {
                 if (
@@ -90,6 +91,10 @@ public static class AuthEndpoints
                         .Trim()
                         .ToLowerInvariant();
 
+                logger.LogInformation(
+                    "Login started. CorrelationId={CorrelationId}",
+                    http.TraceIdentifier);
+
                 var user =
                     await db.Users
                         .FirstOrDefaultAsync(
@@ -105,11 +110,19 @@ public static class AuthEndpoints
                     !user.IsActive
                 )
                 {
+                    logger.LogWarning(
+                        "Login rejected because no active user was found. CorrelationId={CorrelationId}",
+                        http.TraceIdentifier);
                     throw new ApiException(
                         401,
                         "Invalid email address or password."
                     );
                 }
+
+                logger.LogInformation(
+                    "Active login user found. UserId={UserId} CorrelationId={CorrelationId}",
+                    user.Id,
+                    http.TraceIdentifier);
 
                 // ====================================================
                 // PASSWORD HASH CAN BE NULL FOR USERS THAT HAVE NOT
@@ -172,6 +185,10 @@ public static class AuthEndpoints
                     PasswordVerificationResult.Failed
                 )
                 {
+                    logger.LogWarning(
+                        "Login rejected because password validation failed. UserId={UserId} CorrelationId={CorrelationId}",
+                        user.Id,
+                        http.TraceIdentifier);
                     user.FailedLoginAttempts++;
 
                     if (
@@ -241,6 +258,10 @@ public static class AuthEndpoints
 
                 if (!otpEnabled)
                 {
+                    logger.LogInformation(
+                        "Login OTP is not required. UserId={UserId} CorrelationId={CorrelationId}",
+                        user.Id,
+                        http.TraceIdentifier);
                     return await CreateLoginResponseAsync(
                         user,
                         db,
@@ -301,6 +322,10 @@ public static class AuthEndpoints
                         trustedDevice is not null
                     )
                     {
+                        logger.LogInformation(
+                            "Trusted device accepted; login OTP is not required. UserId={UserId} CorrelationId={CorrelationId}",
+                            user.Id,
+                            http.TraceIdentifier);
                         trustedDevice.LastUsedAt =
                             DateTimeOffset.UtcNow;
 
@@ -310,6 +335,10 @@ public static class AuthEndpoints
                     }
                     else
                     {
+                        logger.LogInformation(
+                            "Login OTP is required. UserId={UserId} CorrelationId={CorrelationId}",
+                            user.Id,
+                            http.TraceIdentifier);
                         var now =
                             DateTimeOffset.UtcNow;
 
@@ -375,12 +404,43 @@ public static class AuthEndpoints
                             ct
                         );
 
-                        await emailSender
-                            .SendLoginOtpAsync(
-                                user.Email,
-                                otp,
-                                ct
-                            );
+                        logger.LogInformation(
+                            "Login OTP challenge created. UserId={UserId} ChallengeId={ChallengeId} CorrelationId={CorrelationId}",
+                            user.Id,
+                            challenge.Id,
+                            http.TraceIdentifier);
+
+                        try
+                        {
+                            await emailSender
+                                .SendLoginOtpAsync(
+                                    user.Email,
+                                    otp,
+                                    ct
+                                );
+
+                            logger.LogInformation(
+                                "Login OTP email sent. UserId={UserId} ChallengeId={ChallengeId} CorrelationId={CorrelationId}",
+                                user.Id,
+                                challenge.Id,
+                                http.TraceIdentifier);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            logger.LogError(
+                                ex,
+                                "Login OTP email delivery failed. UserId={UserId} ChallengeId={ChallengeId} CorrelationId={CorrelationId}",
+                                user.Id,
+                                challenge.Id,
+                                http.TraceIdentifier);
+
+                            challenge.UsedAt = DateTimeOffset.UtcNow;
+                            await db.SaveChangesAsync(ct);
+
+                            throw new ApiException(
+                                StatusCodes.Status503ServiceUnavailable,
+                                "We could not deliver the verification code. Please try again later.");
+                        }
 
                         return Results.Ok(
                             new
