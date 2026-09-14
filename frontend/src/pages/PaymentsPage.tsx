@@ -20,6 +20,96 @@ import {
   exportRowsToCsv,
 } from "../utils/exportCsv";
 
+// ============================================================
+// PAYMENT / INVOICE DEDUPLICATION
+// ============================================================
+
+function invoiceKey(
+  row: OracleInvoice
+) {
+  /*
+   * Oracle INVOICE_ID is the real invoice-header identifier and is
+   * therefore the safest key for the Payments page.
+   *
+   * The fallback only protects the UI if a legacy/custom Oracle view
+   * unexpectedly omits INVOICE_ID.
+   */
+  if (
+    row.oracleInvoiceId &&
+    row.oracleInvoiceId.trim()
+  ) {
+    return `INVOICE_ID|${row.oracleInvoiceId.trim()}`;
+  }
+
+  return [
+    "FALLBACK",
+    row.vendorId || "",
+    row.invoiceNumber || "",
+    row.invoiceDate || "",
+    Number(
+      row.invoiceAmount || 0
+    ),
+  ].join("|");
+}
+
+function uniqueInvoices(
+  rows: OracleInvoice[]
+) {
+  const result =
+    new Map<
+      string,
+      OracleInvoice
+    >();
+
+  for (
+    const row of rows
+  ) {
+    const key =
+      invoiceKey(row);
+
+    const current =
+      result.get(key);
+
+    if (!current) {
+      result.set(
+        key,
+        row
+      );
+
+      continue;
+    }
+
+    /*
+     * Backend already returns one row per invoice. This is a defensive
+     * frontend guard so a future Oracle-view change cannot duplicate the
+     * same invoice on screen or in CSV export.
+     */
+    const currentHasStatus =
+      Boolean(
+        current.paymentStatus
+      );
+
+    const candidateHasStatus =
+      Boolean(
+        row.paymentStatus
+      );
+
+    if (
+      candidateHasStatus &&
+      !currentHasStatus
+    ) {
+      result.set(
+        key,
+        row
+      );
+    }
+  }
+
+  return [
+    ...result.values(),
+  ];
+}
+
 export function PaymentsPage() {
   const [rows, setRows] =
     useState<OracleInvoice[]>([]);
@@ -35,14 +125,30 @@ export function PaymentsPage() {
 
   useEffect(() => {
     getMyOracleInvoices()
-      .then(setRows);
+      .then(
+        (data) =>
+          setRows(
+            uniqueInvoices(
+              data
+            )
+          )
+      );
   }, []);
+
+  const canonicalRows =
+    useMemo(
+      () =>
+        uniqueInvoices(
+          rows
+        ),
+      [rows]
+    );
 
   const statusOptions =
     useMemo(() => {
       const values =
         new Set(
-          rows.map(
+          canonicalRows.map(
             (row) =>
               row.paymentStatus ||
               "Pending"
@@ -58,7 +164,7 @@ export function PaymentsPage() {
           value,
           label: value,
         }));
-    }, [rows]);
+    }, [canonicalRows]);
 
   const filteredRows =
     useMemo(() => {
@@ -67,7 +173,7 @@ export function PaymentsPage() {
           .trim()
           .toLowerCase();
 
-      return rows.filter(
+      return canonicalRows.filter(
         (row) => {
           const paymentStatus =
             row.paymentStatus ||
@@ -104,7 +210,7 @@ export function PaymentsPage() {
         }
       );
     }, [
-      rows,
+      canonicalRows,
       search,
       statusFilter,
     ]);
@@ -210,9 +316,13 @@ export function PaymentsPage() {
 
         <tbody>
           {filteredRows.map(
-            (row, index) => (
+            (row) => (
               <tr
-                key={`${row.invoiceNumber}-${index}`}
+                key={
+                  invoiceKey(
+                    row
+                  )
+                }
               >
                 <td>
                   {

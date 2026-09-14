@@ -4307,9 +4307,9 @@ td {
   }
 }
 
-
 /* ============================================================
    ADMIN DASHBOARD KPI COLORED CARDS
+   Preserved from the latest admin dashboard update.
    ============================================================ */
 .admin-role-dashboard .admin-kpi-card {
   border-color: transparent;
@@ -4353,4 +4353,89 @@ td {
 .admin-role-dashboard .admin-kpi-card.orange .role-kpi-icon {
   background: #ffecd3;
   color: #f39a14;
+}
+
+/* ============================================================
+   PURCHASE ORDERS - KEEP ACTION COLUMN INSIDE THE CARD
+   ============================================================ */
+.po-experience {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.po-summary-table {
+  width: 100%;
+  min-width: 0 !important;
+  table-layout: fixed;
+}
+
+.po-summary-table th,
+.po-summary-table td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.po-summary-table th:nth-child(1),
+.po-summary-table td:nth-child(1) {
+  width: 12%;
+}
+
+.po-summary-table th:nth-child(2),
+.po-summary-table td:nth-child(2) {
+  width: 14%;
+}
+
+.po-summary-table th:nth-child(3),
+.po-summary-table td:nth-child(3) {
+  width: 14%;
+}
+
+.po-summary-table th:nth-child(4),
+.po-summary-table td:nth-child(4) {
+  width: 17%;
+}
+
+.po-summary-table th:nth-child(5),
+.po-summary-table td:nth-child(5) {
+  width: 16%;
+}
+
+.po-summary-table th:nth-child(6),
+.po-summary-table td:nth-child(6) {
+  width: 13%;
+}
+
+.po-summary-table th:nth-child(7),
+.po-summary-table td:nth-child(7) {
+  width: 14%;
+  min-width: 105px;
+  text-align: center;
+  overflow: visible;
+}
+
+.po-summary-table td:nth-child(7) .table-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  max-width: 100%;
+  min-width: 88px;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .po-summary-table {
+    table-layout: auto;
+  }
+
+  .po-summary-table th,
+  .po-summary-table td {
+    white-space: normal;
+  }
+
+  .po-summary-table th:nth-child(7),
+  .po-summary-table td:nth-child(7) {
+    min-width: 100px;
+  }
 }

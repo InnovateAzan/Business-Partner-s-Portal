@@ -102,6 +102,13 @@ export function DataTableToolbar({
                 <input
                   type="date"
                   value={draftFrom}
+                  onClick={(event) => {
+                    const input = event.currentTarget;
+
+                    if (typeof input.showPicker === "function") {
+                      input.showPicker();
+                    }
+                  }}
                   onChange={(event) => setDraftFrom(event.target.value)}
                 />
               </label>
@@ -111,6 +118,13 @@ export function DataTableToolbar({
                 <input
                   type="date"
                   value={draftTo}
+                  onClick={(event) => {
+                    const input = event.currentTarget;
+
+                    if (typeof input.showPicker === "function") {
+                      input.showPicker();
+                    }
+                  }}
                   onChange={(event) => setDraftTo(event.target.value)}
                 />
               </label>

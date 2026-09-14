@@ -1,3 +1,4 @@
+using System.Globalization;
 using Oracle.ManagedDataAccess.Client;
 
 namespace BusinessPartnerPortal.Api.Oracle;
@@ -752,9 +753,72 @@ public sealed class OracleService(
         var rows =
             await Read(command, ct);
 
-        return rows
+        var mappedInvoices = rows
             .Select(MapInvoice)
             .ToList();
+
+        /*
+         * APPS.PORTAL_INVOICES_V can return the same AP invoice more
+         * than once when the view joins the invoice header to one-to-many
+         * PO / receipt / GRN detail rows.
+         *
+         * The Payments screen is an invoice-header view, so its grain must
+         * be one row per Oracle AP INVOICE_ID.
+         *
+         * OracleInvoiceId is therefore the primary deduplication key.
+         * A conservative fallback is retained for any legacy/custom view
+         * row where INVOICE_ID is unexpectedly unavailable.
+         */
+        return mappedInvoices
+            .GroupBy(
+                GetOracleInvoiceBusinessKey,
+                StringComparer.OrdinalIgnoreCase
+            )
+            .Select(SelectBestOracleInvoiceRow)
+            .OrderByDescending(x => x.InvoiceDate)
+            .ThenByDescending(x => x.OracleInvoiceId)
+            .ToList();
+    }
+
+    // ============================================================
+    // ORACLE INVOICE BUSINESS KEY
+    // ============================================================
+
+    private static string GetOracleInvoiceBusinessKey(
+        OracleInvoiceDto invoice)
+    {
+        if (!string.IsNullOrWhiteSpace(invoice.OracleInvoiceId))
+        {
+            return $"INVOICE_ID|{invoice.OracleInvoiceId.Trim()}";
+        }
+
+        return string.Join(
+            "|",
+            "FALLBACK",
+            invoice.VendorId?.Trim() ?? string.Empty,
+            invoice.InvoiceNumber?.Trim() ?? string.Empty,
+            invoice.InvoiceDate?.ToString("yyyyMMdd", CultureInfo.InvariantCulture) ?? string.Empty,
+            invoice.InvoiceAmount.ToString(CultureInfo.InvariantCulture)
+        );
+    }
+
+    // ============================================================
+    // SELECT CANONICAL ORACLE INVOICE ROW
+    // ============================================================
+
+    private static OracleInvoiceDto SelectBestOracleInvoiceRow(
+        IEnumerable<OracleInvoiceDto> invoices)
+    {
+        /*
+         * Duplicate rows should normally contain identical header/payment
+         * values. Prefer the row with the most useful payment information,
+         * then the most recent receipt metadata.
+         */
+        return invoices
+            .OrderByDescending(x => !string.IsNullOrWhiteSpace(x.PaymentStatus))
+            .ThenByDescending(x => x.AmountPaid.HasValue)
+            .ThenByDescending(x => x.ReceiptDate)
+            .First();
     }
 
     // ============================================================

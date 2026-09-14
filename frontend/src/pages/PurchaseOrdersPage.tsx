@@ -981,7 +981,7 @@ export function PurchaseOrdersPage()
 
 
   // ============================================================
-  // STATUS FILTER
+  // QC STATUS FILTER
   // ============================================================
 
   const statusOptions =
@@ -991,7 +991,7 @@ export function PurchaseOrdersPage()
           ...new Set(
             summaries.map(
               row =>
-                row.status
+                row.qcStatus
             )
           )
         ]
@@ -1050,46 +1050,75 @@ export function PurchaseOrdersPage()
             const matchesStatus =
               !status
               ||
-              row.status
+              row.qcStatus
                 .toLowerCase()
               ===
               status
                 .toLowerCase();
 
-            const matchesFrom =
-              !from
-              ||
-              (
-                d
-                &&
-                d
-                >=
-                new Date(
-                  `${from}T00:00:00`
-                )
-              );
+            const fromStart =
+              from
+                ? new Date(`${from}T00:00:00`)
+                : null;
 
-            const matchesTo =
-              !to
-              ||
-              (
-                d
-                &&
-                d
-                <=
-                new Date(
-                  `${to}T23:59:59`
-                )
-              );
+            const fromEnd =
+              from
+                ? new Date(`${from}T23:59:59.999`)
+                : null;
+
+            const toEnd =
+              to
+                ? new Date(`${to}T23:59:59.999`)
+                : null;
+
+            /*
+             * Date filter behavior:
+             *
+             * From only  -> exact selected date
+             * To only    -> all records up to selected date
+             * From + To  -> inclusive date range
+             */
+            const matchesDate =
+              !from && !to
+                ? true
+                : from && !to
+                  ? Boolean(
+                      d
+                      &&
+                      fromStart
+                      &&
+                      fromEnd
+                      &&
+                      d >= fromStart
+                      &&
+                      d <= fromEnd
+                    )
+                  : !from && to
+                    ? Boolean(
+                        d
+                        &&
+                        toEnd
+                        &&
+                        d <= toEnd
+                      )
+                    : Boolean(
+                        d
+                        &&
+                        fromStart
+                        &&
+                        toEnd
+                        &&
+                        d >= fromStart
+                        &&
+                        d <= toEnd
+                      );
 
             return (
               matchesSearch
               &&
               matchesStatus
               &&
-              matchesFrom
-              &&
-              matchesTo
+              matchesDate
             );
           }
         ),
@@ -1317,6 +1346,7 @@ export function PurchaseOrdersPage()
             statusValue={status}
             onStatusChange={setStatus}
             statusOptions={statusOptions}
+            statusLabel="QC Status"
             showDateFilter
             fromDate={from}
             toDate={to}
