@@ -107,9 +107,20 @@ public sealed class OracleReconciliationWorker(
                         invoice.Status,
                         StringComparison.OrdinalIgnoreCase);
 
+                var oracleRemarks =
+                    string.IsNullOrWhiteSpace(oracleInvoice.Remarks)
+                        ? null
+                        : oracleInvoice.Remarks.Trim();
+
+                var remarksChanged =
+                    !string.Equals(
+                        invoice.Remarks,
+                        oracleRemarks,
+                        StringComparison.Ordinal);
+
                 // Even when status is already synchronized, repair oracle_invoice_id
                 // if an older version stored the invoice number there.
-                if (!statusChanged && !oracleInvoiceIdChanged)
+                if (!statusChanged && !oracleInvoiceIdChanged && !remarksChanged)
                     continue;
 
                 var oldStatus = invoice.Status;
@@ -123,6 +134,11 @@ public sealed class OracleReconciliationWorker(
                 if (oracleInvoiceIdChanged)
                 {
                     invoice.OracleInvoiceId = parsedOracleInvoiceId.ToString();
+                }
+
+                if (remarksChanged)
+                {
+                    invoice.Remarks = oracleRemarks;
                 }
 
                 invoice.UpdatedAt = now;
@@ -183,6 +199,7 @@ public sealed class OracleReconciliationWorker(
         if (approval.Contains("CANCEL")) return "CANCELLED";
         if (approval.Contains("RETURN") || approval.Contains("REVERT")) return "RETURNED";
         if (approval.Contains("REJECT")) return "REJECTED";
+        if (approval.Contains("PEND")) return "PENDING";
         if (payment.Contains("PAID")) return "PAID";
         if (approval.Contains("APPROV") || approval.Contains("VALID")) return "APPROVED";
         return "PENDING";

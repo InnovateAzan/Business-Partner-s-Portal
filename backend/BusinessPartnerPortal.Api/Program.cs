@@ -251,6 +251,10 @@ allowedOrigins.Add(
     "http://192.168.1.115:5173"
 );
 
+allowedOrigins.Add(
+    "http://10.1.40.52:5173"
+);
+
 // Remove duplicate origins.
 allowedOrigins =
     allowedOrigins

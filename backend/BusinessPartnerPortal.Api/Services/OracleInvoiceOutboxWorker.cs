@@ -1202,6 +1202,21 @@ public sealed class OracleInvoiceOutboxWorker(
         var now =
             DateTimeOffset.UtcNow;
 
+        var portalStatus =
+            string.Equals(
+                status,
+                "ORACLE_REJECTED",
+                StringComparison.OrdinalIgnoreCase
+            )
+                ? "REJECTED"
+                : string.Equals(
+                    status,
+                    "INTEGRATION_FAILED",
+                    StringComparison.OrdinalIgnoreCase
+                )
+                    ? "FAILED"
+                    : status;
+
         await using var transaction =
             await db.Database
                 .BeginTransactionAsync(
@@ -1255,7 +1270,10 @@ public sealed class OracleInvoiceOutboxWorker(
             // and by the FAILED outbox row / last_error. This avoids rolling
             // back the failure transaction because of the DB constraint.
             invoice.Status =
-                status;
+                portalStatus;
+
+            invoice.Remarks =
+                error;
 
             invoice.UpdatedAt =
                 now;
@@ -1263,7 +1281,7 @@ public sealed class OracleInvoiceOutboxWorker(
             if (
                 !string.Equals(
                     oldStatus,
-                    status,
+                    portalStatus,
                     StringComparison.OrdinalIgnoreCase
                 )
             )
@@ -1278,7 +1296,7 @@ public sealed class OracleInvoiceOutboxWorker(
                             oldStatus,
 
                         NewStatus =
-                            status,
+                            portalStatus,
 
                         Remarks =
                             error,
@@ -1313,7 +1331,7 @@ public sealed class OracleInvoiceOutboxWorker(
             "Error={Error}",
             item.InvoiceId,
             item.Id,
-            status,
+            portalStatus,
             oracleRequestId,
             error
         );

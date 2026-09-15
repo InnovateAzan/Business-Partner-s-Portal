@@ -90,6 +90,7 @@ public sealed record OracleInvoiceDto(
     string? PaymentStatusFlag,
     string? PaymentStatus,
     string? ApprovalStatus,
+    string? Remarks,
 
     string? PoNumber,
     string? GrnNumber,

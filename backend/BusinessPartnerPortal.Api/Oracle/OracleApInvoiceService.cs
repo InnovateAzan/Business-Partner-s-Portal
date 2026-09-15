@@ -299,6 +299,16 @@ public sealed class OracleApInvoiceService(
         using var transaction =
             connection.BeginTransaction();
 
+        var goodsReceivedDate =
+            await RunOracleStepAsync(
+                "STAGE.GOODS_RECEIVED_DATE_RESOLUTION",
+                () => ResolveGoodsReceivedDateAsync(
+                    connection,
+                    transaction,
+                    receiptLines,
+                    ct
+                )
+            );
 
         try
         {
@@ -363,6 +373,7 @@ public sealed class OracleApInvoiceService(
                         VENDOR_SITE_ID,
                         INVOICE_AMOUNT,
                         INVOICE_DATE,
+                        GOODS_RECEIVED_DATE,
                         INVOICE_CURRENCY_CODE,
                         TERMS_ID,
                         PAYMENT_METHOD_LOOKUP_CODE,
@@ -390,6 +401,7 @@ public sealed class OracleApInvoiceService(
                         :vendor_site_id,
                         :invoice_amount,
                         :invoice_date,
+                        :goods_received_date,
                         :currency_code,
                         :terms_id,
                         :payment_method,
@@ -422,6 +434,13 @@ public sealed class OracleApInvoiceService(
                     "invoice_date",
                     OracleDbType.Date,
                     invoice.InvoiceDate.ToDateTime(TimeOnly.MinValue)
+                );
+
+                Add(
+                    command,
+                    "goods_received_date",
+                    OracleDbType.Date,
+                    goodsReceivedDate
                 );
 
                 Add(command, "currency_code", OracleDbType.Varchar2, invoice.CurrencyCode);
@@ -660,6 +679,81 @@ public sealed class OracleApInvoiceService(
             transaction.Rollback();
             throw;
         }
+    }
+
+    // ============================================================
+    // GOODS RECEIVED DATE
+    // ============================================================
+
+    private async Task<DateTime> ResolveGoodsReceivedDateAsync(
+        OracleConnection connection,
+        OracleTransaction transaction,
+        IReadOnlyList<OracleReceiptLine> receiptLines,
+        CancellationToken ct)
+    {
+        if (receiptLines.Count == 0)
+        {
+            throw new OracleApBusinessException(
+                "At least one Oracle receipt line is required to resolve GOODS_RECEIVED_DATE."
+            );
+        }
+
+        await using var command =
+            connection.CreateCommand();
+
+        Configure(command);
+        command.Transaction = transaction;
+        command.BindByName = true;
+
+        var transactionParameters =
+            new List<string>();
+
+        for (var i = 0; i < receiptLines.Count; i++)
+        {
+            var name = $"rcv_transaction_id_{i}";
+            transactionParameters.Add($":{name}");
+
+            Add(
+                command,
+                name,
+                OracleDbType.Int64,
+                receiptLines[i].RcvTransactionId
+            );
+        }
+
+        command.CommandText =
+            $"""
+            SELECT MAX(rt.transaction_date)
+            FROM rcv_transactions rt
+            WHERE rt.transaction_id IN
+            (
+                {string.Join(",", transactionParameters)}
+            )
+            """;
+
+        var value =
+            await command.ExecuteScalarAsync(ct);
+
+        if (value is null || value == DBNull.Value)
+        {
+            throw new OracleApBusinessException(
+                "Oracle could not resolve GOODS_RECEIVED_DATE from the selected receipt transaction(s)."
+            );
+        }
+
+        var goodsReceivedDate =
+            Convert.ToDateTime(
+                value,
+                CultureInfo.InvariantCulture
+            );
+
+        logger.LogInformation(
+            "Resolved Oracle GOODS_RECEIVED_DATE={GoodsReceivedDate} from {ReceiptLineCount} selected receipt line(s).",
+            goodsReceivedDate,
+            receiptLines.Count
+        );
+
+        return goodsReceivedDate;
     }
 
     // ============================================================
@@ -2324,7 +2418,8 @@ public sealed class OracleApInvoiceService(
                     x_language => :p_language,
                     x_description => :p_description,
                     x_file_name => :p_file_name,
-                    x_media_id => l_media_id);
+                    x_media_id => l_media_id,
+                    x_title => :p_title);
 
                 fnd_documents_pkg.add_language;
 
@@ -2372,7 +2467,8 @@ public sealed class OracleApInvoiceService(
                     x_doc_attribute13 => NULL,
                     x_doc_attribute14 => NULL,
                     x_doc_attribute15 => NULL,
-                    x_create_doc => 'N');
+                    x_create_doc => 'N',
+                    x_title => :p_title);
 
                 :p_media_id := l_media_id;
                 :p_document_id := l_doc_id;
@@ -2397,7 +2493,20 @@ public sealed class OracleApInvoiceService(
             OracleDbType.Varchar2,
             document.DocumentType == "INVOICE"
                 ? "Business Portal Invoice Copy"
-                : "Business Portal Receipted Delivery Challan"
+                : document.DocumentType == "DELIVERY_CHALLAN"
+                    ? "Business Portal Receipted Delivery Challan"
+                    : "Business Portal Supporting Document"
+        );
+
+        Add(
+            command,
+            "p_title",
+            OracleDbType.Varchar2,
+            document.DocumentType == "INVOICE"
+                ? "Invoice"
+                : document.DocumentType == "DELIVERY_CHALLAN"
+                    ? "Delivery Challan"
+                    : "Supporting Document"
         );
 
         Add(command, "p_invoice_id", OracleDbType.Int64, oracleInvoiceId);
