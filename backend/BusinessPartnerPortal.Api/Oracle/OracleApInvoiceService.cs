@@ -12,6 +12,10 @@ public sealed class OracleApInvoiceService(
     IConfiguration config,
     ILogger<OracleApInvoiceService> logger)
 {
+    // Oracle EBS attachment category: Quick Invoices.
+    // Shared by Invoice, Delivery Challan and Supporting Document attachments.
+    private const long OracleApQuickInvoicesCategoryId = 1000474;
+
     // ============================================================
     // MAIN ORACLE AP PROCESS
     // ============================================================
@@ -2218,8 +2222,7 @@ public sealed class OracleApInvoiceService(
               AND fdcu.enabled_flag = 'Y'
               AND NVL(fdc.start_date_active, TRUNC(SYSDATE)) <= TRUNC(SYSDATE)
               AND (fdc.end_date_active IS NULL OR fdc.end_date_active >= TRUNC(SYSDATE))
-              AND (UPPER(TRIM(fdc.name)) = UPPER(TRIM(:category))
-                   OR UPPER(TRIM(fdc.user_name)) = UPPER(TRIM(:category)))
+              AND fdc.category_id = :category_id
             """;
 
         Add(command, "invoice_id", OracleDbType.Int64, oracleInvoiceId);
@@ -2227,7 +2230,7 @@ public sealed class OracleApInvoiceService(
             Get("ORACLE_AP_INVOICE_ATTACHMENT_FUNCTION", "APXINWKB"));
         Add(command, "function_type", OracleDbType.Varchar2,
             Get("ORACLE_AP_INVOICE_ATTACHMENT_FUNCTION_TYPE", "O"));
-        Add(command, "category", OracleDbType.Varchar2, requestedCategory);
+        Add(command, "category_id", OracleDbType.Int64, OracleApQuickInvoicesCategoryId);
 
         await using var reader = await command.ExecuteReaderAsync(ct);
         var matches = new List<(long CategoryId, string InternalName, string UserName, long AttachmentFunctionId, string AttachmentFunctionName, string AttachmentFunctionType, int SecurityType, long? OrgId, long? SetOfBooksId)>();
@@ -2247,13 +2250,13 @@ public sealed class OracleApInvoiceService(
 
         if (matches.Count == 0)
             throw new OracleApBusinessException(
-                $"Oracle attachment category '{requestedCategory}' is not enabled for AP_INVOICES on attachment function " +
-                $"'{Get("ORACLE_AP_INVOICE_ATTACHMENT_FUNCTION", "APXINWKB")}'. Configure an enabled category for the Payables Invoice Workbench.");
+                $"Oracle attachment category ID {OracleApQuickInvoicesCategoryId} (Quick Invoices) is not enabled for AP_INVOICES on attachment function " +
+                $"'{Get("ORACLE_AP_INVOICE_ATTACHMENT_FUNCTION", "APXINWKB")}'. Configure this category for the Payables Invoice Workbench.");
 
         var match = matches[0];
         if (matches.Any(x => x.CategoryId != match.CategoryId || x.SecurityType != match.SecurityType))
             throw new OracleApBusinessException(
-                $"Oracle attachment configuration for AP_INVOICES category '{requestedCategory}' is ambiguous. " +
+                $"Oracle attachment configuration for AP_INVOICES category ID {OracleApQuickInvoicesCategoryId} (Quick Invoices) is ambiguous. " +
                 "Resolve the duplicate enabled attachment-function/block setup before retrying.");
 
         var fileDatatypeId = await ResolveFileDatatypeIdAsync(connection, transaction, ct);
