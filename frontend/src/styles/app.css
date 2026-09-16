@@ -4454,10 +4454,10 @@ td {
    2026-09-14
    ========================================================= */
 
-/* Keep Finance KPI cards on one row and let Supply Chain use four equal-width cards. */
+/* Keep all six Finance KPI cards on one row and let Supply Chain use four equal-width cards. */
 .finance-dashboard .role-kpis {
   display: grid !important;
-  grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+  grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
   gap: 10px !important;
   width: 100% !important;
   max-width: 100% !important;

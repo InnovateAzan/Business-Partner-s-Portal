@@ -1,52 +1,101 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { deletePortalInvoice, getInvoiceIssue, getMyPortalInvoices } from "../api/portal";
+import {
+  deletePortalInvoice,
+  getInvoiceIssue,
+  getMyPortalInvoices,
+} from "../api/portal";
 import { DataTableToolbar } from "../components/DataTableToolbar";
 import type { PortalInvoice } from "../types";
 import { exportRowsToCsv } from "../utils/exportCsv";
 
-type InvoicePresentation = { status: string; issue?: boolean };
+type InvoicePresentation = {
+  status: string;
+  issue?: boolean;
+};
 
 function presentInvoice(row: PortalInvoice): InvoicePresentation {
   const status = (row.status || "").toUpperCase();
   const integration = (row.integrationStatus || "").toUpperCase();
 
-  if (status === "CANCELLED") return { status: "Cancelled" };
-  if (status === "PAID") return { status: "Paid" };
-  if (status === "APPROVED" || status === "ACCEPTED") return { status: "Approved" };
-  if (status === "RETURNED") return { status: "Returned for Correction", issue: true };
-  if (["ORACLE_REJECTED", "REJECTED"].includes(status)) return { status: "Rejected", issue: true };
+  if (status === "CANCELLED") {
+    return { status: "Cancelled" };
+  }
+
+  if (status === "PAID") {
+    return { status: "Paid" };
+  }
+
+  if (status === "APPROVED" || status === "ACCEPTED") {
+    return { status: "Approved" };
+  }
+
+  if (status === "RETURNED") {
+    return {
+      status: "Returned for Correction",
+      issue: true,
+    };
+  }
+
+  if (["ORACLE_REJECTED", "REJECTED"].includes(status)) {
+    return {
+      status: "Rejected",
+      issue: true,
+    };
+  }
 
   if (
     ["INTEGRATION_FAILED", "FAILED"].includes(status) ||
     ["FAILED", "INTEGRATION_FAILED"].includes(integration)
   ) {
-    return { status: "Action Required", issue: true };
+    return {
+      status: "Action Required",
+      issue: true,
+    };
   }
 
-  if (status === "PENDING" || status === "UNDER_FINANCE_REVIEW") {
-    return { status: "Pending for Approval" };
+  if (
+    status === "PENDING" ||
+    status === "UNDER_FINANCE_REVIEW"
+  ) {
+    return {
+      status: "Pending for Approval",
+    };
   }
 
-  if (status === "SENT_TO_ORACLE" || integration === "SUCCESS") {
-    return { status: "Pending" };
+  if (
+    status === "SENT_TO_ORACLE" ||
+    integration === "SUCCESS"
+  ) {
+    return {
+      status: "Pending",
+    };
   }
 
   if (
     ["PROCESSING", "RETRYING", "RESUBMITTED"].includes(status) ||
     ["PENDING", "PROCESSING", "RETRYING"].includes(integration)
   ) {
-    return { status: "Processing" };
+    return {
+      status: "Processing",
+    };
   }
 
-  return { status: "Submitted" };
+  return {
+    status: "Submitted",
+  };
 }
 
 function statusClass(row: PortalInvoice) {
   const status = presentInvoice(row).status;
 
   if (
-    ["Cancelled", "Rejected", "Action Required", "Returned for Correction"].includes(status)
+    [
+      "Cancelled",
+      "Rejected",
+      "Action Required",
+      "Returned for Correction",
+    ].includes(status)
   ) {
     return "red";
   }
@@ -55,7 +104,13 @@ function statusClass(row: PortalInvoice) {
     return "orange";
   }
 
-  if (["Pending for Approval", "Approved", "Paid"].includes(status)) {
+  if (
+    [
+      "Pending for Approval",
+      "Approved",
+      "Paid",
+    ].includes(status)
+  ) {
     return "green";
   }
 
@@ -68,7 +123,12 @@ function canDelete(row: PortalInvoice) {
 
   return (
     status === "CANCELLED" ||
-    ["INTEGRATION_FAILED", "FAILED", "ORACLE_REJECTED", "REJECTED"].includes(status) ||
+    [
+      "INTEGRATION_FAILED",
+      "FAILED",
+      "ORACLE_REJECTED",
+      "REJECTED",
+    ].includes(status) ||
     ["FAILED", "INTEGRATION_FAILED"].includes(integration)
   );
 }
@@ -77,23 +137,72 @@ export function RequestHistoryPage() {
   const [rows, setRows] = useState<PortalInvoice[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+
   const navigate = useNavigate();
+
   const [issueLoading, setIssueLoading] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(
+    null
+  );
 
   async function loadRows() {
-    setRows(await getMyPortalInvoices());
+    const data = await getMyPortalInvoices();
+    setRows(data);
   }
 
+  /*
+   * Load invoice history immediately and then automatically
+   * refresh it every 5 seconds.
+   *
+   * This allows Oracle/backend status changes such as:
+   *
+   * Processing -> Pending for Approval
+   * Processing -> Rejected
+   * Processing -> Paid
+   *
+   * to appear without manually refreshing the browser.
+   */
   useEffect(() => {
-    loadRows();
+    let active = true;
+
+    const refreshRows = async () => {
+      try {
+        const data = await getMyPortalInvoices();
+
+        if (active) {
+          setRows(data);
+        }
+      } catch (error) {
+        console.error(
+          "Failed to refresh invoice history:",
+          error
+        );
+      }
+    };
+
+    // Initial load
+    refreshRows();
+
+    // Automatically refresh every 5 seconds
+    const intervalId = window.setInterval(
+      refreshRows,
+      5000
+    );
+
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
   }, []);
 
   const statusOptions = useMemo(() => {
     const options = new Map<string, string>();
 
     rows.forEach((row) => {
-      options.set(row.status, presentInvoice(row).status);
+      options.set(
+        row.status,
+        presentInvoice(row).status
+      );
     });
 
     return [...options.entries()]
@@ -112,7 +221,9 @@ export function RequestHistoryPage() {
         row.invoiceNumber,
         row.invoiceDate || "-",
         row.poNumber || "-",
-        Number(row.invoiceAmount || 0).toLocaleString(),
+        Number(
+          row.invoiceAmount || 0
+        ).toLocaleString(),
         presentInvoice(row).status,
         row.grnNumbers?.join(", ") || "-",
         row.description || "-",
@@ -121,9 +232,11 @@ export function RequestHistoryPage() {
         .toLowerCase();
 
       return (
-        (!query || visibleText.includes(query)) &&
+        (!query ||
+          visibleText.includes(query)) &&
         (!statusFilter ||
-          row.status.toLowerCase() === statusFilter.toLowerCase())
+          row.status.toLowerCase() ===
+            statusFilter.toLowerCase())
       );
     });
   }, [rows, search, statusFilter]);
@@ -149,6 +262,7 @@ export function RequestHistoryPage() {
         presentInvoice(row).status,
         row.description || "-",
         row.grnNumbers?.join(", ") || "-",
+
         presentInvoice(row).status === "Rejected"
           ? "Resubmit"
           : presentInvoice(row).issue
@@ -169,23 +283,35 @@ export function RequestHistoryPage() {
       const query = new URLSearchParams();
 
       if (issue.reason) {
-        query.set("issue", issue.reason);
+        query.set(
+          "issue",
+          issue.reason
+        );
       }
 
       if (issue.oracleRequestId) {
-        query.set("oracleRequestId", String(issue.oracleRequestId));
+        query.set(
+          "oracleRequestId",
+          String(issue.oracleRequestId)
+        );
       }
 
-      if (issue.integrationStatus || issue.status) {
+      if (
+        issue.integrationStatus ||
+        issue.status
+      ) {
         query.set(
           "integrationStatus",
-          issue.integrationStatus || issue.status
+          issue.integrationStatus ||
+            issue.status
         );
       }
 
       navigate(
         `/invoices/${row.id}/resubmit${
-          query.toString() ? `?${query.toString()}` : ""
+          query.toString()
+            ? `?${query.toString()}`
+            : ""
         }`
       );
     } finally {
@@ -193,14 +319,18 @@ export function RequestHistoryPage() {
     }
   }
 
-  async function deleteInvoice(row: PortalInvoice) {
+  async function deleteInvoice(
+    row: PortalInvoice
+  ) {
     const confirmed = window.confirm(
       row.status.toUpperCase() === "CANCELLED"
         ? `Delete cancelled invoice ${row.invoiceNumber} from the portal?`
         : `Delete failed invoice ${row.invoiceNumber} from the portal?`
     );
 
-    if (!confirmed) return;
+    if (!confirmed) {
+      return;
+    }
 
     setDeletingId(row.id);
 
@@ -208,7 +338,9 @@ export function RequestHistoryPage() {
       await deletePortalInvoice(row.id);
 
       setRows((current) =>
-        current.filter((x) => x.id !== row.id)
+        current.filter(
+          (x) => x.id !== row.id
+        )
       );
     } finally {
       setDeletingId(null);
@@ -220,8 +352,10 @@ export function RequestHistoryPage() {
       <div className="page-card-head invoice-history-head">
         <div>
           <h2>Invoice History</h2>
+
           <p>
-            Drafts, submissions, returned invoices and resubmission status.
+            Drafts, submissions, returned invoices
+            and resubmission status.
           </p>
         </div>
 
@@ -262,7 +396,9 @@ export function RequestHistoryPage() {
         <tbody>
           {filteredRows.map((row) => (
             <tr key={row.id}>
-              <td>{row.invoiceNumber}</td>
+              <td>
+                {row.invoiceNumber}
+              </td>
 
               <td>
                 {row.invoiceDate || "-"}
@@ -273,12 +409,16 @@ export function RequestHistoryPage() {
               </td>
 
               <td>
-                {Number(row.invoiceAmount).toLocaleString()}
+                {Number(
+                  row.invoiceAmount
+                ).toLocaleString()}
               </td>
 
               <td>
                 <span
-                  className={`status ${statusClass(row)}`}
+                  className={`status ${statusClass(
+                    row
+                  )}`}
                 >
                   {presentInvoice(row).status}
                 </span>
@@ -289,7 +429,8 @@ export function RequestHistoryPage() {
               </td>
 
               <td>
-                {row.grnNumbers?.join(", ") || "-"}
+                {row.grnNumbers?.join(", ") ||
+                  "-"}
               </td>
 
               <td>
@@ -305,9 +446,12 @@ export function RequestHistoryPage() {
                       className="table-btn"
                       type="button"
                       disabled={issueLoading}
-                      onClick={() => viewIssue(row)}
+                      onClick={() =>
+                        viewIssue(row)
+                      }
                     >
-                      {presentInvoice(row).status === "Rejected"
+                      {presentInvoice(row)
+                        .status === "Rejected"
                         ? "Resubmit"
                         : "View Issue"}
                     </button>
@@ -317,8 +461,12 @@ export function RequestHistoryPage() {
                     <button
                       className="danger-btn"
                       type="button"
-                      disabled={deletingId === row.id}
-                      onClick={() => deleteInvoice(row)}
+                      disabled={
+                        deletingId === row.id
+                      }
+                      onClick={() =>
+                        deleteInvoice(row)
+                      }
                     >
                       {deletingId === row.id
                         ? "Deleting..."

@@ -158,6 +158,7 @@ public static class VendorAccessEndpoints
 
                             supplier.TaxNumber,
                             supplier.VendorType,
+                            supplier.PaymentMethod,
                             supplier.AddressLine1,
                             supplier.AddressLine2,
                             supplier.AddressLine3,
@@ -236,6 +237,7 @@ public static class VendorAccessEndpoints
 
                         supplier.TaxNumber,
                         supplier.VendorType,
+                        supplier.PaymentMethod,
                         supplier.AddressLine1,
                         supplier.AddressLine2,
                         supplier.AddressLine3,
@@ -455,6 +457,17 @@ public static class VendorAccessEndpoints
                     throw new ApiException(
                         409,
                         "Oracle supplier name is missing.");
+                }
+
+                // Payment method is a prerequisite for portal onboarding.
+                // PORTAL_SUPPLIERS_V now exposes PAYMENT_METHOD.
+                // A blank value means Finance still needs to complete the
+                // supplier payment setup in Oracle EBS.
+                if (string.IsNullOrWhiteSpace(supplier.PaymentMethod))
+                {
+                    throw new ApiException(
+                        409,
+                        "Vendor payment method is not enabled in Oracle. Please ask Finance to enable the vendor payment method before onboarding.");
                 }
 
                 var oracleVendorIdText =

@@ -37,3 +37,58 @@ export async function retryIntegration(id:string){ const {data}=await api.post(`
 export async function getAuditLogs(){ const {data}=await api.get("/admin/audit"); return data; }
 export function getMyReceiptLines(poNumber:string,grnNumbers:string[]=[]){ const normalizedGrns=[...new Set(grnNumbers.map(x=>x.trim()).filter(Boolean))].sort(); const key=`${poNumber.trim()}|${normalizedGrns.join(",")}`; const pending=receiptLineRequests.get(key); if(pending)return pending; const request=api.get<OracleReceiptLine[]>("/oracle/receipt-lines/my",{params:{poNumber:poNumber.trim(),grnNumbers:normalizedGrns.join(",")}}).then(({data})=>data).finally(()=>receiptLineRequests.delete(key)); receiptLineRequests.set(key,request); return request; }
 export async function getLiveDashboard(){ const {data}=await api.get("/dashboard/live"); return data; }
+
+export type InvoiceDocumentDto = {
+  id: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  documentType: string;
+  originalFileName: string;
+  contentType: string;
+  fileSize: number;
+  uploadedAt: string;
+};
+
+export async function getInvoiceDocuments() {
+  const { data } = await api.get<InvoiceDocumentDto[]>("/documents/invoices");
+  return data;
+}
+
+async function getInvoiceDocumentBlob(id: string) {
+  const { data } = await api.get<Blob>(`/documents/${id}`, {
+    responseType: "blob",
+  });
+
+  return data;
+}
+
+export async function viewInvoiceDocument(document: InvoiceDocumentDto) {
+  const blob = await getInvoiceDocumentBlob(document.id);
+  const url = window.URL.createObjectURL(blob);
+
+  const link = window.document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  window.document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  window.setTimeout(() => {
+    window.URL.revokeObjectURL(url);
+  }, 60_000);
+}
+
+export async function downloadInvoiceDocument(document: InvoiceDocumentDto) {
+  const blob = await getInvoiceDocumentBlob(document.id);
+  const url = window.URL.createObjectURL(blob);
+
+  const link = window.document.createElement("a");
+  link.href = url;
+  link.download = document.originalFileName || "document";
+  window.document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  window.URL.revokeObjectURL(url);
+}

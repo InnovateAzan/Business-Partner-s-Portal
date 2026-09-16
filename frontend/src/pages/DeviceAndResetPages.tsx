@@ -13,7 +13,7 @@ export function ForgotPasswordPage() {
 export function ResetPasswordPage() {
   const [params] = useSearchParams(); const nav = useNavigate(); const [password, setPassword] = useState(""); const [confirm, setConfirm] = useState(""); const [error, setError] = useState(""); const [done, setDone] = useState(false);
   async function submit(e: React.FormEvent) { e.preventDefault(); setError(""); try { await resetPassword(params.get("token") || "", password, confirm); setDone(true); setTimeout(() => nav("/login"), 1200); } catch (e) { setError(getApiErrorMessage(e)); } }
-  return <main className="auth-page"><section className="signup-card"><h1>Reset Password</h1>{done ? <p className="success-note">Password reset. Redirecting to sign in…</p> : <form className="signup-form" onSubmit={submit}><label>New Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="new-password" /></label><label>Confirm Password<input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} required autoComplete="new-password" /></label>{error && <div className="form-error">{error}</div>}<button className="primary-btn">Reset Password</button></form>}</section></main>;
+  return <main className="auth-page"><section className="signup-card"><div className="auth-brand-logo"><img src="/pakistan-cables-logo.png" alt="Pakistan Cables" /></div><h1>Reset Password</h1>{done ? <p className="success-note">Password reset. Redirecting to sign in…</p> : <form className="signup-form" onSubmit={submit}><label>New Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="new-password" /></label><label>Confirm Password<input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} required autoComplete="new-password" /></label>{error && <div className="form-error">{error}</div>}<button className="primary-btn">Reset Password</button></form>}</section></main>;
 }
 
 export function VerifyDevicePage() {
@@ -85,8 +85,8 @@ export function VerifyDevicePage() {
   return (
     <main className="auth-page otp-page">
       <section className="otp-card">
-        <div className="otp-illustration" aria-hidden="true">
-          <span className="otp-phone">▯</span><span className="otp-check">✓</span>
+        <div className="auth-brand-logo otp-brand-logo">
+          <img src="/pakistan-cables-logo.png" alt="Pakistan Cables" />
         </div>
         <h1>OTP Verification</h1>
         <p>Enter the OTP sent to <strong>{maskedEmail}</strong></p>

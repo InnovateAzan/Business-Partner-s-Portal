@@ -70,8 +70,8 @@ import {
 } from "./pages/InternalDashboard";
 
 import {
-  SupplyChainRecordsPage,
-} from "./pages/SupplyChainRecordsPage";
+  FinanceInvoiceRecordsPage,
+} from "./pages/FinanceInvoiceRecordsPage";
 
 import {
   AdminDashboard,
@@ -289,40 +289,19 @@ export default function App() {
             />
 
             <Route
+              path="/finance/invoices"
+              element={
+                <FinanceInvoiceRecordsPage />
+              }
+            />
+
+            <Route
               path="/supply-chain/vendors"
               element={
                 <VendorAccessPage />
               }
             />
 
-
-            <Route
-              path="/supply-chain/purchase-orders"
-              element={
-                <SupplyChainRecordsPage kind="po" />
-              }
-            />
-
-            <Route
-              path="/supply-chain/grns"
-              element={
-                <SupplyChainRecordsPage kind="grn" />
-              }
-            />
-
-            <Route
-              path="/supply-chain/vendor-requests"
-              element={
-                <SupplyChainRecordsPage kind="pending" />
-              }
-            />
-
-            <Route
-              path="/supply-chain/onboarded-vendors"
-              element={
-                <SupplyChainRecordsPage kind="onboarded" />
-              }
-            />
 
             <Route
               path="/integration"

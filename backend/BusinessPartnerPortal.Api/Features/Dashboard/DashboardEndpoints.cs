@@ -232,53 +232,50 @@ public static class DashboardEndpoints
                     string integrationStatus,
                     string? oracleInvoiceId)
                 {
-                    if (
-                        !string.IsNullOrWhiteSpace(oracleInvoiceId) ||
-                        integrationStatus.Equals(
-                            "PROCESSED",
-                            StringComparison.OrdinalIgnoreCase))
-                    {
-                        return "Integrated";
-                    }
+                    var normalizedStatus =
+                        (status ?? string.Empty)
+                            .Trim()
+                            .ToUpperInvariant();
 
-                    if (
-                        status.Equals(
-                            "RETURNED",
-                            StringComparison.OrdinalIgnoreCase) ||
-                        status.Equals(
-                            "INTEGRATION_FAILED",
-                            StringComparison.OrdinalIgnoreCase) ||
-                        integrationStatus.Equals(
-                            "FAILED",
-                            StringComparison.OrdinalIgnoreCase))
-                    {
+                    var normalizedIntegration =
+                        (integrationStatus ?? string.Empty)
+                            .Trim()
+                            .ToUpperInvariant();
+
+                    // Finance dashboard must use the same business status
+                    // terminology as Vendor Invoice History. Oracle/business
+                    // status takes priority over technical integration state.
+                    if (normalizedStatus is "CANCELLED" or "CANCELED")
+                        return "Cancelled";
+
+                    if (normalizedStatus is "REJECTED" or "ORACLE_REJECTED" or "RETURNED")
                         return "Rejected";
-                    }
 
-                    if (
-                        status.Equals(
-                            "UNDER_FINANCE_REVIEW",
-                            StringComparison.OrdinalIgnoreCase))
-                    {
-                        return "Under Review";
-                    }
+                    if (normalizedStatus is "ACCEPTED" or "APPROVED")
+                        return "Approved";
 
-                    // =================================================
-                    // CHANGED:
-                    // DB status PAID is currently the final stage
-                    // before actual payment completion.
-                    // Therefore portal shows "Pending Payment".
-                    // =================================================
+                    if (normalizedStatus == "PAID")
+                        return "Paid";
 
-                    if (
-                        status.Equals(
-                            "PAID",
-                            StringComparison.OrdinalIgnoreCase))
-                    {
-                        return "Pending Payment";
-                    }
+                    if (normalizedStatus is "PENDING" or "UNDER_FINANCE_REVIEW")
+                        return "Pending for Approval";
 
-                    return "Pending";
+                    if (normalizedStatus is "INTEGRATION_FAILED" or "FAILED" ||
+                        normalizedIntegration is "FAILED" or "INTEGRATION_FAILED")
+                        return "Rejected";
+
+                    if (normalizedStatus is "SUBMITTED" or "SENT_TO_ORACLE" or "RESUBMITTED" or "PROCESSING" or "RETRYING" ||
+                        normalizedIntegration is "PENDING" or "PROCESSING" or "RETRYING")
+                        return "Processing";
+
+                    // If Oracle has already created the invoice but the business
+                    // status has not synchronized yet, keep the row in a neutral
+                    // transient state instead of showing the old generic Integrated label.
+                    if (!string.IsNullOrWhiteSpace(oracleInvoiceId) ||
+                        normalizedIntegration is "PROCESSED" or "SUCCESS")
+                        return "Processing";
+
+                    return "Pending for Approval";
                 }
 
                 var vendorById =
@@ -354,6 +351,7 @@ public static class DashboardEndpoints
 
                                 rawStatus = x.Status,
                                 integrationStatus = x.IntegrationStatus,
+                                remarks = x.Remarks,
                                 oracleInvoiceNo = x.OracleInvoiceId,
                                 submissionDate = x.SubmissionDate,
                                 updatedAt = x.UpdatedAt,
@@ -372,28 +370,29 @@ public static class DashboardEndpoints
                     total =
                         invoiceRows.Count,
 
-                    integrated =
-                        invoiceRows.Count(
-                            x => x.status == "Integrated"),
-
                     pending =
                         invoiceRows.Count(
-                            x => x.status == "Pending"),
+                            x => x.status == "Pending for Approval"),
+
+                    approved =
+                        invoiceRows.Count(
+                            x => x.status == "Approved"),
 
                     rejected =
                         invoiceRows.Count(
                             x => x.status == "Rejected"),
 
-                    underReview =
+                    cancelled =
                         invoiceRows.Count(
-                            x => x.status == "Under Review"),
+                            x => x.status == "Cancelled"),
 
-                    // Keep property name "paid" for frontend/API
-                    // compatibility, but it now counts rows displayed
-                    // as "Pending Payment".
                     paid =
                         invoiceRows.Count(
-                            x => x.status == "Pending Payment")
+                            x => x.status == "Paid"),
+
+                    processing =
+                        invoiceRows.Count(
+                            x => x.status == "Processing")
                 };
 
                 var invoiceTrend =
@@ -414,7 +413,7 @@ public static class DashboardEndpoints
                                         (x.SubmissionDate ?? x.CreatedAt).Month ==
                                             month.Month),
 
-                            integrated =
+                            approved =
                                 invoices.Count(
                                     x =>
                                         (x.SubmissionDate ?? x.CreatedAt).Year ==
@@ -425,7 +424,7 @@ public static class DashboardEndpoints
                                             x.Status,
                                             x.IntegrationStatus,
                                             x.OracleInvoiceId) ==
-                                        "Integrated")
+                                        "Approved")
                         })
                         .ToList();
 
@@ -504,7 +503,12 @@ public static class DashboardEndpoints
                                                 inv.Status,
                                                 inv.IntegrationStatus,
                                                 inv.OracleInvoiceId) ==
-                                            "Integrated")
+                                            "Approved" ||
+                                        NormalizeInvoiceStatus(
+                                            inv.Status,
+                                            inv.IntegrationStatus,
+                                            inv.OracleInvoiceId) ==
+                                            "Paid")
                                         ? "Invoiced"
                                         : "Pending";
 
@@ -722,8 +726,56 @@ public static class DashboardEndpoints
                             onboardedAt = x.user.CreatedAt,
                             lastAccess = x.user.LastLoginAt
                         })
-                        .Take(100)
                         .ToList();
+
+                var fiscalYearStart =
+                    now.Month >= 7
+                        ? new DateTimeOffset(
+                            now.Year,
+                            7,
+                            1,
+                            0,
+                            0,
+                            0,
+                            TimeSpan.Zero)
+                        : new DateTimeOffset(
+                            now.Year - 1,
+                            7,
+                            1,
+                            0,
+                            0,
+                            0,
+                            TimeSpan.Zero);
+
+                var onboardedThisFiscalYear =
+                    recentlyOnboardedVendors
+                        .Where(x => x.onboardedAt >= fiscalYearStart)
+                        .Select(x => x.vendorId)
+                        .Distinct()
+                        .Count();
+
+                var onboardingTrend =
+                    Enumerable.Range(0, 6)
+                        .Select(offset => sixMonthStart.AddMonths(offset))
+                        .Select(month => new
+                        {
+                            month = month.ToString("MMM"),
+
+                            onboarded =
+                                recentlyOnboardedVendors
+                                    .Where(
+                                        x =>
+                                            x.onboardedAt.Year == month.Year &&
+                                            x.onboardedAt.Month == month.Month)
+                                    .Select(x => x.vendorId)
+                                    .Distinct()
+                                    .Count()
+                        })
+                        .ToList();
+
+                var portalEnabledVendorCount =
+                    vendorAccessRows.Count(
+                        x => x.activePortalUsers > 0);
 
                 var recentUsers =
                     users
@@ -983,23 +1035,19 @@ public static class DashboardEndpoints
                                         totalInvoices =
                                             invoiceStatus.total,
 
-                                        integratedInOracle =
-                                            invoiceStatus.integrated,
-
-                                        pendingInOracle =
+                                        pendingForApproval =
                                             invoiceStatus.pending,
 
-                                        rejectedInOracle =
+                                        approved =
+                                            invoiceStatus.approved,
+
+                                        rejected =
                                             invoiceStatus.rejected,
 
-                                        underReview =
-                                            invoiceStatus.underReview,
+                                        cancelled =
+                                            invoiceStatus.cancelled,
 
-                                        // Existing API property retained
-                                        // so frontend does not break.
-                                        // Count now represents
-                                        // Pending Payment rows.
-                                        recentlyPaid =
+                                        paid =
                                             invoiceStatus.paid,
 
                                         payments =
@@ -1038,46 +1086,27 @@ public static class DashboardEndpoints
                                         activePortalUsers =
                                             activePortalUserIds.Count,
 
-                                        purchaseOrders =
-                                            purchaseOrders.Count,
+                                        pendingVendorAccess =
+                                            pendingVendorRequests.Count,
 
-                                        grnsReceived =
-                                            grns.Count,
-
-                                        openVendorRequests =
-                                            pendingVendorRequests.Count
+                                        onboardedThisFiscalYear
                                     },
 
                                     accessStatus = new
                                     {
                                         total =
-                                            vendors.Count,
+                                            oracleVendorCount,
 
                                         portalEnabled =
-                                            vendorAccessRows.Count(
-                                                x =>
-                                                    x.activePortalUsers > 0),
+                                            portalEnabledVendorCount,
 
                                         notEnabled =
-                                            vendorAccessRows.Count(
-                                                x =>
-                                                    x.activePortalUsers == 0),
-
-                                        pendingApproval =
-                                            0
+                                            Math.Max(
+                                                0,
+                                                oracleVendorCount - portalEnabledVendorCount)
                                     },
 
-                                    trend =
-                                        poTrend,
-
-                                    topVendors =
-                                        topPoVendors,
-
-                                    purchaseOrders =
-                                        purchaseOrderRows,
-
-                                    grns =
-                                        grnRows,
+                                    onboardingTrend,
 
                                     pendingVendorRequests,
 

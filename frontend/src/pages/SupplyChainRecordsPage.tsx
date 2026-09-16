@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -255,6 +256,24 @@ export function SupplyChainRecordsPage({
   ] = useState("");
 
   const [
+    dateFilterOpen,
+    setDateFilterOpen,
+  ] = useState(false);
+
+  const [
+    draftFrom,
+    setDraftFrom,
+  ] = useState("");
+
+  const [
+    draftTo,
+    setDraftTo,
+  ] = useState("");
+
+  const dateFilterRef =
+    useRef<HTMLDivElement | null>(null);
+
+  const [
     applied,
     setApplied,
   ] = useState({
@@ -271,6 +290,32 @@ export function SupplyChainRecordsPage({
   ] = useState(1);
 
   const pageSize = 15;
+
+  useEffect(() => {
+    if (!dateFilterOpen) {
+      return;
+    }
+
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (
+        dateFilterRef.current &&
+        !dateFilterRef.current.contains(event.target as Node)
+      ) {
+        setDateFilterOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutsideClick);
+
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+    };
+  }, [dateFilterOpen]);
+
+  useEffect(() => {
+    setDraftFrom(from);
+    setDraftTo(to);
+  }, [from, to]);
 
   useEffect(
     () => {
@@ -364,6 +409,12 @@ export function SupplyChainRecordsPage({
       () =>
         source.filter(
           (row: any) => {
+            const activeFrom = kind === "onboarded" ? applied.from : applied.from;
+            const activeTo = kind === "onboarded" ? applied.to : applied.to;
+            const activeVendor = kind === "onboarded" ? vendor : applied.vendor;
+            const activeStatus = kind === "onboarded" ? status : applied.status;
+            const activeSearch = kind === "onboarded" ? search : applied.search;
+
             const date =
               row.poDate ||
               row.grnDate ||
@@ -380,7 +431,7 @@ export function SupplyChainRecordsPage({
               );
 
             const query =
-              applied.search
+              activeSearch
                 .trim()
                 .toLowerCase();
 
@@ -392,18 +443,18 @@ export function SupplyChainRecordsPage({
             return (
               inRange(
                 date,
-                applied.from,
-                applied.to
+                activeFrom,
+                activeTo
               ) &&
               (
-                !applied.vendor ||
+                !activeVendor ||
                 row.vendorName ===
-                  applied.vendor
+                  activeVendor
               ) &&
               (
-                !applied.status ||
+                !activeStatus ||
                 rowStatus ===
-                  applied.status
+                  activeStatus
               ) &&
               (
                 !query ||
@@ -417,6 +468,10 @@ export function SupplyChainRecordsPage({
       [
         source,
         applied,
+        vendor,
+        status,
+        search,
+        kind,
       ]
     );
 
@@ -427,6 +482,9 @@ export function SupplyChainRecordsPage({
     [
       applied,
       kind,
+      vendor,
+      status,
+      search,
     ]
   );
 
@@ -608,18 +666,139 @@ export function SupplyChainRecordsPage({
           </p>
         </div>
 
-        <button
-          type="button"
-          className="primary-btn"
-          onClick={
-            exportRows
-          }
-        >
-          Export to Excel
-        </button>
+        {kind === "onboarded" ? (
+          <div className="data-toolbar">
+            <input
+              className="data-toolbar-search"
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search vendors..."
+              aria-label="Search vendors"
+            />
+
+            <select
+              className="data-toolbar-select"
+              value={vendor}
+              onChange={(event) => setVendor(event.target.value)}
+              aria-label="Vendor filter"
+            >
+              <option value="">Vendor: All</option>
+              {vendors.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+
+            <select
+              className="data-toolbar-select"
+              value={status}
+              onChange={(event) => setStatus(event.target.value)}
+              aria-label="Status filter"
+            >
+              <option value="">Status: All</option>
+              {statuses.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+
+            <div className="date-filter-wrap" ref={dateFilterRef}>
+              <button
+                type="button"
+                className={`data-toolbar-btn ${from || to ? "active" : ""}`}
+                onClick={() => setDateFilterOpen((current) => !current)}
+              >
+                Date Filter
+              </button>
+
+              {dateFilterOpen && (
+                <div className="date-filter-popup">
+                  <label>
+                    From Date
+                    <input
+                      type="date"
+                      value={draftFrom}
+                      onClick={(event) => openDatePicker(event.currentTarget)}
+                      onChange={(event) => setDraftFrom(event.target.value)}
+                    />
+                  </label>
+
+                  <label>
+                    To Date
+                    <input
+                      type="date"
+                      value={draftTo}
+                      onClick={(event) => openDatePicker(event.currentTarget)}
+                      onChange={(event) => setDraftTo(event.target.value)}
+                    />
+                  </label>
+
+                  <div className="date-filter-actions">
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      onClick={() => {
+                        setDraftFrom("");
+                        setDraftTo("");
+                        setFrom("");
+                        setTo("");
+                        setApplied((current) => ({
+                          ...current,
+                          from: "",
+                          to: "",
+                        }));
+                        setDateFilterOpen(false);
+                      }}
+                    >
+                      Clear
+                    </button>
+
+                    <button
+                      type="button"
+                      className="primary-btn"
+                      onClick={() => {
+                        setFrom(draftFrom);
+                        setTo(draftTo);
+                        setApplied((current) => ({
+                          ...current,
+                          from: draftFrom,
+                          to: draftTo,
+                        }));
+                        setDateFilterOpen(false);
+                      }}
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              className="data-toolbar-btn export-btn"
+              onClick={exportRows}
+            >
+              Export
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="primary-btn"
+            onClick={exportRows}
+          >
+            Export to Excel
+          </button>
+        )}
       </div>
 
-      <div className="role-filters supply-records-filters">
+      {kind !== "onboarded" && (
+        <div className="role-filters supply-records-filters">
+
         <label>
           <span>
             From Date
@@ -770,7 +949,8 @@ export function SupplyChainRecordsPage({
         >
           Clear
         </button>
-      </div>
+        </div>
+      )}
 
       <div className="role-table-scroll supply-records-table-wrap">
         {kind === "po" ? (

@@ -18,6 +18,7 @@ public sealed record OracleSupplierDto(
 
     string? TaxNumber,
     string? VendorType,
+    string? PaymentMethod,
 
     string? AddressLine1,
     string? AddressLine2,
@@ -90,6 +91,7 @@ public sealed record OracleInvoiceDto(
     string? PaymentStatusFlag,
     string? PaymentStatus,
     string? ApprovalStatus,
+
     string? Remarks,
 
     string? PoNumber,

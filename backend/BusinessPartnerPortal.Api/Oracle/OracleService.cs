@@ -19,25 +19,9 @@ public sealed class OracleService(
                 options.ConnectionString
             );
 
-        try
-        {
-            await connection.OpenAsync(ct);
-            return connection;
-        }
-        catch (OracleException ex) when (ct.IsCancellationRequested && ex.Number == 1013)
-        {
-            await connection.DisposeAsync();
-            throw new OperationCanceledException(
-                "Oracle connection opening was cancelled because the application is stopping.",
-                ex,
-                ct
-            );
-        }
-        catch
-        {
-            await connection.DisposeAsync();
-            throw;
-        }
+        await connection.OpenAsync(ct);
+
+        return connection;
     }
 
     // ============================================================
@@ -754,16 +738,11 @@ public sealed class OracleService(
 
         command.CommandText =
             """
-            SELECT
-                piv.*,
-                aia.attribute11 AS APPROVAL_STATUS_DFF,
-                aia.attribute13 AS REMARKS_DFF
-            FROM APPS.PORTAL_INVOICES_V piv
-            LEFT JOIN AP_INVOICES_ALL aia
-                ON aia.invoice_id = piv.invoice_id
-            WHERE piv.VENDOR_ID = :vendorId
+            SELECT *
+            FROM APPS.PORTAL_INVOICES_V
+            WHERE VENDOR_ID = :vendorId
             ORDER BY
-                piv.INVOICE_DATE DESC NULLS LAST
+                INVOICE_DATE DESC NULLS LAST
             """;
 
         command.Parameters.Add(
@@ -887,24 +866,15 @@ public sealed class OracleService(
                     row[
                         reader.GetName(i)
                     ] =
-                        ReadOracleValue(
-                            reader,
-                            i
-                        );
+                        reader.IsDBNull(i)
+                            ? null
+                            : reader.GetValue(i);
                 }
 
                 result.Add(row);
             }
 
             return result;
-        }
-        catch (OracleException ex) when (ct.IsCancellationRequested && ex.Number == 1013)
-        {
-            throw new OperationCanceledException(
-                "Oracle query was cancelled because the application is stopping.",
-                ex,
-                ct
-            );
         }
         catch (OracleException ex)
         {
@@ -916,81 +886,6 @@ public sealed class OracleService(
 
             throw;
         }
-    }
-
-    // ============================================================
-    // SAFE ORACLE VALUE READER
-    // ============================================================
-
-    private static object? ReadOracleValue(
-        OracleDataReader reader,
-        int ordinal)
-    {
-        if (reader.IsDBNull(ordinal))
-        {
-            return null;
-        }
-
-        /*
-         * IMPORTANT:
-         *
-         * Oracle NUMBER can hold values with precision/range that cannot
-         * always be represented by System.Decimal.
-         *
-         * OracleDataReader.GetValue() attempts to materialize NUMBER as
-         * System.Decimal and can therefore throw:
-         *
-         *   InvalidCastException
-         *     -> OverflowException
-         *
-         * even when the application does not actually use that column.
-         *
-         * Read Oracle numeric values through OracleDecimal instead and keep
-         * them as text. The existing S(...) and N(...) helpers can safely
-         * consume that representation:
-         *
-         * - IDs remain lossless strings.
-         * - Business amounts/quantities are converted to decimal only when
-         *   they actually fit into System.Decimal.
-         */
-        var dataTypeName =
-            reader.GetDataTypeName(
-                ordinal
-            );
-
-        if (
-            string.Equals(
-                dataTypeName,
-                "NUMBER",
-                StringComparison.OrdinalIgnoreCase
-            )
-            ||
-            string.Equals(
-                dataTypeName,
-                "DECIMAL",
-                StringComparison.OrdinalIgnoreCase
-            )
-            ||
-            string.Equals(
-                dataTypeName,
-                "ORACLEDECIMAL",
-                StringComparison.OrdinalIgnoreCase
-            )
-        )
-        {
-            var oracleDecimal =
-                reader.GetOracleDecimal(
-                    ordinal
-                );
-
-            return oracleDecimal.IsNull
-                ? null
-                : oracleDecimal.ToString();
-        }
-
-        return reader.GetValue(
-            ordinal
-        );
     }
 
     // ============================================================
@@ -1073,16 +968,7 @@ public sealed class OracleService(
                 if (
                     decimal.TryParse(
                         text,
-                        NumberStyles.Any,
-                        CultureInfo.InvariantCulture,
                         out var parsed
-                    )
-                    ||
-                    decimal.TryParse(
-                        text,
-                        NumberStyles.Any,
-                        CultureInfo.CurrentCulture,
-                        out parsed
                     )
                 )
                 {
@@ -1231,6 +1117,14 @@ public sealed class OracleService(
                     "VENDOR_TYPE",
                     "VENDOR_TYPE_LOOKUP_CODE",
                     "SUPPLIER_TYPE"
+                ),
+
+            PaymentMethod:
+                S(
+                    row,
+                    "PAYMENT_METHOD",
+                    "PAYMENT_METHOD_LOOKUP_CODE",
+                    "DEFAULT_PAYMENT_METHOD_CODE"
                 ),
 
             AddressLine1:
@@ -1548,18 +1442,13 @@ public sealed class OracleService(
             ApprovalStatus:
                 S(
                     row,
-                    "APPROVAL_STATUS_DFF",
-                    "ATTRIBUTE11",
                     "APPROVAL_STATUS"
                 ),
 
             Remarks:
                 S(
                     row,
-                    "REMARKS_DFF",
-                    "ATTRIBUTE13",
-                    "REMARKS",
-                    "ATTRIBUTE12"
+                    "REMARKS"
                 ),
 
             PoNumber:

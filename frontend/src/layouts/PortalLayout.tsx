@@ -319,37 +319,16 @@ export function PortalLayout() {
                 "Dashboard",
                 "dashboard",
               ],
-              ...(user.permissions.includes("INVOICE.VIEW_ALL")
-                ? [[
-                    "/invoices",
-                    "Invoices",
-                    "invoice",
-                  ] as MenuItem]
-                : []),
-              ...(user.permissions.includes("PO.VIEW")
-                ? [[
-                    "/purchase-orders",
-                    "Purchase Orders",
-                    "po",
-                  ] as MenuItem]
-                : []),
-              ...(user.permissions.includes("GRN.VIEW")
-                ? [[
-                    "/grns",
-                    "GRNs",
-                    "grn",
-                  ] as MenuItem]
-                : []),
-              ...(user.permissions.includes("PAYMENT.VIEW")
-                ? [[
-                    "/payments",
-                    "Payments",
-                    "payment",
-                  ] as MenuItem]
-                : []),
-              ...(user.permissions.includes("INTEGRATION.VIEW")
-                ? [["/integration", "Integration Support", "integration"] as MenuItem]
-                : []),
+              [
+                "/finance/invoices",
+                "Invoice Records",
+                "invoice",
+              ],
+              [
+                "/integration",
+                "Integration Issues",
+                "integration",
+              ],
             ]
           : isSupplyChain
             ? [
@@ -363,37 +342,6 @@ export function PortalLayout() {
                   "Vendor Access",
                   "admin",
                 ],
-                ...(user.permissions.includes("PO.VIEW")
-                  ? [[
-                      "/supply-chain/purchase-orders",
-                      "Recent Purchase Orders",
-                      "po",
-                    ] as MenuItem]
-                  : []),
-                ...(user.permissions.includes("GRN.VIEW")
-                  ? [[
-                      "/supply-chain/grns",
-                      "Recent GRNs",
-                      "grn",
-                    ] as MenuItem]
-                  : []),
-                ...(user.permissions.includes("VENDOR.MANAGE")
-                  ? [[
-                      "/supply-chain/vendor-requests",
-                      "Pending Vendor Requests",
-                      "support",
-                    ] as MenuItem]
-                  : []),
-                ...(user.permissions.includes("VENDOR.VIEW")
-                  ? [[
-                      "/supply-chain/onboarded-vendors",
-                      "Onboarded Vendors",
-                      "user",
-                    ] as MenuItem]
-                  : []),
-                ...(user.permissions.includes("INTEGRATION.VIEW")
-                  ? [["/integration", "Integration Support", "integration"] as MenuItem]
-                  : []),
               ]
             : [
                 [

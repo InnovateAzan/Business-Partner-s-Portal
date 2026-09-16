@@ -227,14 +227,45 @@ var configuredFrontendUrls =
     ?? builder.Configuration["FRONTEND_URL"]
     ?? string.Empty;
 
+static string? NormalizeCorsOrigin(string value)
+{
+    var trimmed =
+        value.Trim();
+
+    if (
+        string.IsNullOrWhiteSpace(
+            trimmed
+        )
+    )
+    {
+        return null;
+    }
+
+    if (
+        Uri.TryCreate(
+            trimmed,
+            UriKind.Absolute,
+            out var uri
+        )
+    )
+    {
+        return uri.GetLeftPart(
+            UriPartial.Authority
+        );
+    }
+
+    return trimmed.TrimEnd('/');
+}
+
 var allowedOrigins =
     configuredFrontendUrls
         .Split(
             new[] { ',', ';' },
             StringSplitOptions.RemoveEmptyEntries
         )
-        .Select(x => x.Trim().TrimEnd('/'))
+        .Select(NormalizeCorsOrigin)
         .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => x!)
         .ToList();
 
 // Preserve local development origins while requiring LAN origins to be
@@ -253,6 +284,10 @@ allowedOrigins.Add(
 
 allowedOrigins.Add(
     "http://10.1.40.52:5173"
+);
+
+allowedOrigins.Add(
+    "http://10.4.3.79:8088"
 );
 
 // Remove duplicate origins.
