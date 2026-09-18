@@ -4729,3 +4729,145 @@ td {
     display: none;
   }
 }
+/* ============================================================
+   OTP / DEVICE VERIFICATION - PAKISTAN CABLES LOGO
+============================================================ */
+
+.auth-brand-logo {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-brand-logo img {
+  display: block;
+  width: 100px;
+  height: 100px;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.otp-brand-logo {
+  margin: 0 auto 18px;
+}
+
+.otp-brand-logo img {
+  width: 105px;
+  height: 105px;
+  object-fit: contain;
+}
+
+/* Keep logo safely inside OTP card */
+.otp-card {
+  overflow: hidden;
+}
+
+@media (max-width: 480px) {
+  .otp-brand-logo img {
+    width: 90px;
+    height: 90px;
+  }
+}
+/* ============================================================
+   NOTIFICATIONS PAGE - DELETE ACTIONS
+============================================================ */
+.notification-page-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.notification-row-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.notification-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.notification-delete-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid #f0c6c6;
+  border-radius: 6px;
+  background: #fff;
+  color: #d92d20;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+
+.notification-delete-btn svg {
+  width: 17px;
+  height: 17px;
+  pointer-events: none;
+}
+
+.notification-delete-btn:hover:not(:disabled) {
+  background: #fff1f1;
+  border-color: #e7a9a9;
+  color: #bd1e14;
+}
+
+.notification-delete-btn:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+.notification-delete-all-btn {
+  min-height: 38px;
+  padding: 0 18px;
+  border: 1px solid #e5b1b1;
+  border-radius: 6px;
+  background: #fff;
+  color: #d92d20;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+
+.notification-delete-all-btn:hover:not(:disabled) {
+  background: #fff1f1;
+  border-color: #dc8f8f;
+  color: #bd1e14;
+}
+
+.notification-delete-all-btn:disabled,
+.notification-page-actions .secondary-btn:disabled,
+.notification-row-actions .table-btn:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 700px) {
+  .page-card-head {
+    gap: 12px;
+    flex-direction: column;
+  }
+
+  .notification-page-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .notification-row {
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .notification-row-actions {
+    align-self: flex-start;
+  }
+}

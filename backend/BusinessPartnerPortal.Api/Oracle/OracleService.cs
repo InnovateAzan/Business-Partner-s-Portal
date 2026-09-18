@@ -738,11 +738,60 @@ public sealed class OracleService(
 
         command.CommandText =
             """
-            SELECT *
-            FROM APPS.PORTAL_INVOICES_V
-            WHERE VENDOR_ID = :vendorId
+            SELECT
+                TO_CHAR(v.VENDOR_ID) AS VENDOR_ID,
+                TO_CHAR(v.SUPPLIER_NUMBER) AS SUPPLIER_NUMBER,
+                v.VENDOR_NAME,
+                TO_CHAR(v.INVOICE_ID) AS INVOICE_ID,
+                v.INVOICE_NUM,
+                v.INVOICE_DATE,
+
+                TO_CHAR(
+                    v.INVOICE_AMOUNT,
+                    'TM9',
+                    'NLS_NUMERIC_CHARACTERS=''.,'''
+                ) AS INVOICE_AMOUNT,
+
+                TO_CHAR(
+                    v.AMOUNT_PAID,
+                    'TM9',
+                    'NLS_NUMERIC_CHARACTERS=''.,'''
+                ) AS AMOUNT_PAID,
+
+                TO_CHAR(
+                    v.OUTSTANDING_AMOUNT,
+                    'TM9',
+                    'NLS_NUMERIC_CHARACTERS=''.,'''
+                ) AS OUTSTANDING_AMOUNT,
+
+                v.PAYMENT_STATUS_FLAG,
+                v.PAYMENT_STATUS,
+
+                CASE
+                    WHEN UPPER(TRIM(aia.ATTRIBUTE_CATEGORY)) = 'BUSINESS PARTNER PORTAL'
+                    THEN TRIM(aia.ATTRIBUTE11)
+                    ELSE NULL
+                END AS APPROVAL_STATUS,
+
+                CASE
+                    WHEN UPPER(TRIM(aia.ATTRIBUTE_CATEGORY)) = 'BUSINESS PARTNER PORTAL'
+                    THEN TRIM(aia.ATTRIBUTE13)
+                    ELSE NULL
+                END AS REMARKS,
+
+                TO_CHAR(v.PO_NUMBER) AS PO_NUMBER,
+                TO_CHAR(v.GRN_NUMBER) AS GRN_NUMBER,
+                v.RECEIPT_DATE
+
+            FROM APPS.PORTAL_INVOICES_V v
+
+            LEFT JOIN AP_INVOICES_ALL aia
+                ON aia.INVOICE_ID = v.INVOICE_ID
+
+            WHERE v.VENDOR_ID = :vendorId
+
             ORDER BY
-                INVOICE_DATE DESC NULLS LAST
+                v.INVOICE_DATE DESC NULLS LAST
             """;
 
         command.Parameters.Add(
@@ -806,20 +855,44 @@ public sealed class OracleService(
     // SELECT CANONICAL ORACLE INVOICE ROW
     // ============================================================
 
-    private static OracleInvoiceDto SelectBestOracleInvoiceRow(
-        IEnumerable<OracleInvoiceDto> invoices)
-    {
-        /*
-         * Duplicate rows should normally contain identical header/payment
-         * values. Prefer the row with the most useful payment information,
-         * then the most recent receipt metadata.
-         */
-        return invoices
-            .OrderByDescending(x => !string.IsNullOrWhiteSpace(x.PaymentStatus))
-            .ThenByDescending(x => x.AmountPaid.HasValue)
-            .ThenByDescending(x => x.ReceiptDate)
-            .First();
-    }
+   private static OracleInvoiceDto SelectBestOracleInvoiceRow(
+    IEnumerable<OracleInvoiceDto> invoices)
+{
+    /*
+     * APPS.PORTAL_INVOICES_V may return multiple rows for the same
+     * Oracle invoice because of PO / GRN / receipt joins.
+     *
+     * For portal reconciliation the Oracle DFF Approval Status is
+     * authoritative.
+     *
+     * Priority:
+     * 1. Row containing APPROVAL_STATUS
+     * 2. Row containing REMARKS
+     * 3. Row containing PAYMENT_STATUS
+     * 4. Row containing AMOUNT_PAID
+     * 5. Latest receipt row
+     *
+     * This prevents PAYMENT_STATUS = PAID from incorrectly overriding
+     * APPROVAL_STATUS = Pending / Approved / Rejected / Cancelled.
+     */
+    return invoices
+        .OrderByDescending(
+            x => !string.IsNullOrWhiteSpace(x.ApprovalStatus)
+        )
+        .ThenByDescending(
+            x => !string.IsNullOrWhiteSpace(x.Remarks)
+        )
+        .ThenByDescending(
+            x => !string.IsNullOrWhiteSpace(x.PaymentStatus)
+        )
+        .ThenByDescending(
+            x => x.AmountPaid.HasValue
+        )
+        .ThenByDescending(
+            x => x.ReceiptDate
+        )
+        .First();
+}
 
     // ============================================================
     // GENERIC ORACLE READER
@@ -863,12 +936,47 @@ public sealed class OracleService(
                     i++
                 )
                 {
-                    row[
-                        reader.GetName(i)
-                    ] =
-                        reader.IsDBNull(i)
-                            ? null
-                            : reader.GetValue(i);
+                    var columnName =
+                        reader.GetName(i);
+
+                    if (reader.IsDBNull(i))
+                    {
+                        row[columnName] = null;
+                        continue;
+                    }
+
+                    try
+                    {
+                        /*
+                         * Oracle NUMBER supports a wider precision/range than
+                         * System.Decimal. OracleDataReader.GetValue() may therefore
+                         * throw InvalidCastException/OverflowException for a NUMBER
+                         * that cannot be represented as a .NET decimal.
+                         *
+                         * Normal values continue through GetValue(). For an
+                         * out-of-range Oracle numeric value, fall back to the
+                         * Oracle-native value and keep its text representation.
+                         * The S()/N() helpers below can safely consume that text.
+                         */
+                        row[columnName] =
+                            reader.GetValue(i);
+                    }
+                    catch (InvalidCastException)
+                    {
+                        row[columnName] =
+                            Convert.ToString(
+                                reader.GetOracleValue(i),
+                                CultureInfo.InvariantCulture
+                            );
+                    }
+                    catch (OverflowException)
+                    {
+                        row[columnName] =
+                            Convert.ToString(
+                                reader.GetOracleValue(i),
+                                CultureInfo.InvariantCulture
+                            );
+                    }
                 }
 
                 result.Add(row);

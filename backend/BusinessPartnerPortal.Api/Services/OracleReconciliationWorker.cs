@@ -120,18 +120,57 @@ public sealed class OracleReconciliationWorker(
 
             foreach (var invoice in portalInvoices)
             {
-                var oracleInvoice =
-                    oracleRows.FirstOrDefault(
-                        x =>
-                            string.Equals(
-                                x.InvoiceNumber,
-                                invoice.InvoiceNumber,
-                                StringComparison.OrdinalIgnoreCase
-                            )
-                    );
+                /*
+                 * Match by Oracle AP INVOICE_ID first.
+                 *
+                 * Invoice number is not guaranteed to be unique in the portal
+                 * database, and this project already contains duplicate invoice
+                 * numbers with different Oracle INVOICE_ID values.
+                 *
+                 * If the portal row already has oracle_invoice_id, never match it
+                 * to a different Oracle invoice merely because the invoice number
+                 * is the same.
+                 *
+                 * Invoice-number fallback is retained only for legacy rows where
+                 * oracle_invoice_id has not yet been populated.
+                 */
+                OracleInvoiceDto? oracleInvoice = null;
+
+                if (!string.IsNullOrWhiteSpace(invoice.OracleInvoiceId))
+                {
+                    oracleInvoice =
+                        oracleRows.FirstOrDefault(
+                            x =>
+                                string.Equals(
+                                    x.OracleInvoiceId?.Trim(),
+                                    invoice.OracleInvoiceId.Trim(),
+                                    StringComparison.OrdinalIgnoreCase
+                                )
+                        );
+                }
+                else
+                {
+                    oracleInvoice =
+                        oracleRows.FirstOrDefault(
+                            x =>
+                                string.Equals(
+                                    x.InvoiceNumber?.Trim(),
+                                    invoice.InvoiceNumber?.Trim(),
+                                    StringComparison.OrdinalIgnoreCase
+                                )
+                        );
+                }
 
                 if (oracleInvoice is null)
                 {
+                    logger.LogWarning(
+                        "Oracle invoice match not found. PortalInvoiceId={PortalInvoiceId}, " +
+                        "PortalInvoiceNumber={PortalInvoiceNumber}, PortalOracleInvoiceId={PortalOracleInvoiceId}",
+                        invoice.Id,
+                        invoice.InvoiceNumber,
+                        invoice.OracleInvoiceId
+                    );
+
                     continue;
                 }
 
@@ -314,11 +353,6 @@ public sealed class OracleReconciliationWorker(
                 .Trim()
                 .ToUpperInvariant();
 
-        var payment =
-            (invoice.PaymentStatus ?? string.Empty)
-                .Trim()
-                .ToUpperInvariant();
-
         /*
          * IMPORTANT:
          *
@@ -390,16 +424,17 @@ public sealed class OracleReconciliationWorker(
         }
 
         /*
-         * Payment status is only a fallback when Oracle Approval
-         * Status did not contain one of the supported values above.
+         * IMPORTANT:
+         * Do NOT use PAYMENT_STATUS as a fallback for portal workflow status.
+         *
+         * AP_INVOICES_ALL.ATTRIBUTE11 is the authoritative portal status.
+         * Oracle can report PAYMENT_STATUS = PAID independently of the
+         * Business Partner Portal approval workflow. Using payment as a
+         * fallback can therefore overwrite Pending / Cancelled / Rejected
+         * with PAID when the DFF value is temporarily blank/unavailable.
+         *
+         * A portal invoice becomes PAID only when ATTRIBUTE11 itself says Paid.
          */
-        if (
-            payment.Contains("PAID")
-        )
-        {
-            return "PAID";
-        }
-
         return "PENDING";
     }
 }
