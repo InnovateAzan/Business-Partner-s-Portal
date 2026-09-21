@@ -100,6 +100,7 @@ public static class OracleEndpoints
             async (
                 string poNumber,
                 string? grnNumbers,
+                Guid? invoiceId,
                 CurrentUser current,
                 AppDbContext db,
                 OracleService oracleRead,
@@ -221,21 +222,167 @@ public static class OracleEndpoints
                                     OracleApInvoiceService>());
 
                     var lines =
-                        await ap
+                        (await ap
                             .GetReceiptLinesForPortalAsync(
                                 oracleVendorId,
                                 normalizedPoNumber,
                                 grns,
-                                ct);
+                                ct))
+                        .ToList();
+
+                    /*
+                     * RESUBMISSION SUPPORT
+                     *
+                     * A rejected/returned/cancelled invoice can legitimately
+                     * have zero generic Oracle availability because its own
+                     * original AP invoice consumed the receipt quantity.
+                     *
+                     * When invoiceId is supplied, merge back only that portal
+                     * invoice's own saved GRN allocations. This keeps its GRNs
+                     * visible for correction/resubmission without making another
+                     * vendor's or another invoice's allocation available.
+                     */
+                    if (invoiceId.HasValue)
+                    {
+                        var portalVendorId =
+                            await current.GetVendorIdAsync(ct)
+                            ?? throw new ApiException(
+                                403,
+                                "Vendor account mapping is missing.");
+
+                        var resubmitInvoice =
+                            await db.Invoices
+                                .AsNoTracking()
+                                .FirstOrDefaultAsync(
+                                    x =>
+                                        x.Id == invoiceId.Value &&
+                                        x.VendorId == portalVendorId &&
+                                        x.DeletedAt == null,
+                                    ct)
+                            ?? throw new ApiException(
+                                404,
+                                "Invoice not found.");
+
+                        var resubmitStatus =
+                            (resubmitInvoice.Status ?? string.Empty)
+                                .Trim()
+                                .ToUpperInvariant();
+
+                        var canRestoreOwnAllocations =
+                            resubmitStatus is
+                                "REJECTED" or
+                                "ORACLE_REJECTED" or
+                                "RETURNED" or
+                                "CANCELLED" or
+                                "INTEGRATION_FAILED" or
+                                "FAILED" or
+                                "RESUBMITTED";
+
+                        if (canRestoreOwnAllocations)
+                        {
+                            var ownAllocations =
+                                await db.InvoiceLineGrnAllocations
+                                    .AsNoTracking()
+                                    .Where(
+                                        x =>
+                                            x.InvoiceId == invoiceId.Value &&
+                                            x.VendorId == portalVendorId &&
+                                            x.PoNumber == normalizedPoNumber &&
+                                            (
+                                                grns.Count == 0 ||
+                                                grns.Contains(x.GrnNumber)
+                                            ))
+                                    .ToListAsync(ct);
+
+                            var lineIds =
+                                lines
+                                    .Select(x => x.RcvTransactionId)
+                                    .ToHashSet();
+
+                            foreach (var allocation in ownAllocations)
+                            {
+                                if (lineIds.Contains(allocation.RcvTransactionId))
+                                {
+                                    continue;
+                                }
+
+                                var otherAllocated =
+                                    await db.InvoiceLineGrnAllocations
+                                        .AsNoTracking()
+                                        .Where(
+                                            x =>
+                                                x.RcvTransactionId == allocation.RcvTransactionId &&
+                                                x.InvoiceId != invoiceId.Value)
+                                        .Join(
+                                            db.Invoices
+                                                .AsNoTracking()
+                                                .Where(
+                                                    i =>
+                                                        i.DeletedAt == null &&
+                                                        i.Status != "CANCELLED" &&
+                                                        i.Status != "INTEGRATION_FAILED" &&
+                                                        i.Status != "FAILED" &&
+                                                        i.Status != "REJECTED" &&
+                                                        i.Status != "ORACLE_REJECTED" &&
+                                                        i.Status != "RETURNED"),
+                                            a => a.InvoiceId,
+                                            i => i.Id,
+                                            (a, i) => a.AllocatedQuantity)
+                                        .SumAsync(ct);
+
+                                var originalQuantity =
+                                    allocation.AllocatedQuantity > 0
+                                        ? allocation.AllocatedQuantity
+                                        : allocation.AvailableQuantityAtSubmit > 0
+                                            ? allocation.AvailableQuantityAtSubmit
+                                            : allocation.ReceivedQuantity;
+
+                                var restoredAvailable =
+                                    Math.Max(
+                                        0m,
+                                        originalQuantity - otherAllocated);
+
+                                if (restoredAvailable <= 0)
+                                {
+                                    continue;
+                                }
+
+                                lines.Add(
+                                    new OracleReceiptLine(
+                                        allocation.RcvTransactionId,
+                                        allocation.GrnNumber,
+                                        0,
+                                        null,
+                                        null,
+                                        allocation.PoHeaderId,
+                                        allocation.PoNumber,
+                                        allocation.PoLineId,
+                                        allocation.PoLineNumber,
+                                        allocation.PoLineLocationId,
+                                        null,
+                                        allocation.ReceivedQuantity,
+                                        restoredAvailable,
+                                        allocation.UnitPrice,
+                                        allocation.MatchOption ?? "P"));
+
+                                lineIds.Add(allocation.RcvTransactionId);
+                            }
+                        }
+                    }
 
                     logger.LogInformation(
-                        "Oracle receipt-line lookup successful. VendorId={VendorId}, PO={PoNumber}, Count={Count}",
+                        "Oracle receipt-line lookup successful. VendorId={VendorId}, PO={PoNumber}, Count={Count}, ResubmitInvoiceId={InvoiceId}",
                         oracleVendorId,
                         normalizedPoNumber,
-                        lines.Count);
+                        lines.Count,
+                        invoiceId);
 
                     return Results.Ok(
-                        lines);
+                        lines
+                            .OrderBy(x => x.GrnNumber)
+                            .ThenBy(x => x.PoLineNumber)
+                            .ThenBy(x => x.RcvTransactionId)
+                            .ToList());
                 }
                 catch (
                     OracleApBusinessException ex)

@@ -849,6 +849,43 @@ public static class InvoiceEndpoints
         var selectedReceiptLines =
             new List<OracleReceiptLine>();
 
+        /*
+         * RESUBMISSION RULE:
+         * A rejected/returned/cancelled invoice already owns its original
+         * GRN allocations. Those same receipt lines must remain usable on
+         * resubmit even when Oracle currently reports zero "available"
+         * quantity, because that quantity may have been consumed by this
+         * very invoice.
+         */
+        var resubmitAllocations =
+            resubmitId.HasValue
+                ? await db.InvoiceLineGrnAllocations
+                    .AsNoTracking()
+                    .Where(
+                        x =>
+                            x.InvoiceId ==
+                            resubmitId.Value)
+                    .ToListAsync(ct)
+                : new List<InvoiceLineGrnAllocation>();
+
+        var resubmitGrnNumbers =
+            resubmitAllocations
+                .Select(
+                    x =>
+                        x.GrnNumber)
+                .Where(
+                    x =>
+                        !string.IsNullOrWhiteSpace(x))
+                .ToHashSet(
+                    StringComparer.OrdinalIgnoreCase);
+
+        var resubmitReceiptTransactionIds =
+            resubmitAllocations
+                .Select(
+                    x =>
+                        x.RcvTransactionId)
+                .ToHashSet();
+
         if (!draft)
         {
             var ap =
@@ -899,6 +936,63 @@ public static class InvoiceEndpoints
                                 rcvTransactionIds
                                     .Contains(
                                         x.RcvTransactionId)));
+            }
+
+            /*
+             * If an original resubmit receipt line is no longer returned by
+             * the normal "available receipt lines" query, rebuild it from
+             * the portal's own saved allocation. This prevents the invoice
+             * from losing its original GRN merely because Oracle currently
+             * reports that same quantity as already invoiced.
+             */
+            if (resubmitId.HasValue)
+            {
+                var currentlyResolvedIds =
+                    selectedReceiptLines
+                        .Select(
+                            x =>
+                                x.RcvTransactionId)
+                        .ToHashSet();
+
+                foreach (
+                    var allocation in
+                    resubmitAllocations.Where(
+                        x =>
+                            rcvTransactionIds.Contains(
+                                x.RcvTransactionId)
+                            &&
+                            !currentlyResolvedIds.Contains(
+                                x.RcvTransactionId)))
+                {
+                    var restoredQuantity =
+                        allocation.AllocatedQuantity > 0
+                            ? allocation.AllocatedQuantity
+                            : allocation.AvailableQuantityAtSubmit;
+
+                    if (restoredQuantity <= 0)
+                    {
+                        restoredQuantity =
+                            allocation.ReceivedQuantity;
+                    }
+
+                    selectedReceiptLines.Add(
+                        new OracleReceiptLine(
+                            allocation.RcvTransactionId,
+                            allocation.GrnNumber,
+                            0,
+                            null,
+                            null,
+                            allocation.PoHeaderId,
+                            allocation.PoNumber,
+                            allocation.PoLineId,
+                            allocation.PoLineNumber,
+                            allocation.PoLineLocationId,
+                            null,
+                            allocation.ReceivedQuantity,
+                            restoredQuantity,
+                            allocation.UnitPrice,
+                            allocation.MatchOption ?? string.Empty));
+                }
             }
 
             var resolvedIds =
@@ -967,6 +1061,23 @@ public static class InvoiceEndpoints
                 throw new ApiException(
                     400,
                     $"GRN {grnNumber} does not belong to any selected PO for this vendor.");
+            }
+
+            var isOriginalResubmitGrn =
+                resubmitId.HasValue
+                &&
+                resubmitGrnNumbers.Contains(
+                    grnNumber);
+
+            /*
+             * For a resubmission, the invoice's own original GRNs are valid
+             * even if Oracle's generic PO/GRN availability view currently
+             * reports zero available quantity. They are not a new allocation;
+             * they belong to the invoice being corrected and resubmitted.
+             */
+            if (isOriginalResubmitGrn)
+            {
+                continue;
             }
 
             var validRow =
@@ -1530,7 +1641,15 @@ public static class InvoiceEndpoints
                                     &&
                                     i.Status != "CANCELLED"
                                     &&
-                                    i.Status != "INTEGRATION_FAILED"),
+                                    i.Status != "INTEGRATION_FAILED"
+                                    &&
+                                    i.Status != "FAILED"
+                                    &&
+                                    i.Status != "REJECTED"
+                                    &&
+                                    i.Status != "ORACLE_REJECTED"
+                                    &&
+                                    i.Status != "RETURNED"),
                             a =>
                                 a.InvoiceId,
                             i =>

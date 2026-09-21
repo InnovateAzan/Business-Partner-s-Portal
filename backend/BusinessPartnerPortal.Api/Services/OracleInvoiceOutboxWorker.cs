@@ -865,6 +865,7 @@ public sealed class OracleInvoiceOutboxWorker(
                     invoice.GrnNumbers,
                     invoice.InvoiceType,
                     invoice.Remarks,
+                    invoice.Status,
                     vendor.OracleVendorId
                 }
             )
@@ -997,7 +998,13 @@ public sealed class OracleInvoiceOutboxWorker(
             row.InvoiceAmount,
             row.CurrencyCode,
             row.InvoiceType,
-            row.Remarks
+            row.Remarks,
+
+            string.Equals(
+                row.Status?.Trim(),
+                "RESUBMITTED",
+                StringComparison.OrdinalIgnoreCase
+            )
         );
     }
 

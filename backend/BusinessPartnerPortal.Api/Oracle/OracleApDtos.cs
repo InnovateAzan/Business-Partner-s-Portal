@@ -15,7 +15,11 @@ public sealed record OracleApPortalInvoice(
     decimal InvoiceAmount,
     string CurrencyCode,
     string InvoiceType,
-    string? Description
+    string? Description,
+
+    // True when the portal is sending an already-imported Oracle AP invoice
+    // back to Finance for a new review cycle.
+    bool IsResubmission
 );
 
 public sealed record OracleApDocument(

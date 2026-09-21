@@ -66,6 +66,38 @@ public sealed class OracleApInvoiceService(
 
         if (existingInvoiceId.HasValue)
         {
+            /*
+             * A normal retry may legitimately discover that Oracle already
+             * imported the invoice before the portal saved the result. In that
+             * case returning the existing Oracle INVOICE_ID is correct.
+             *
+             * A RESUBMISSION is different: the existing AP invoice is the same
+             * invoice that Finance previously marked Rejected / Returned /
+             * Cancelled in the Business Partner Portal DFF. If we simply return
+             * success here, ATTRIBUTE11 remains on the old status and the
+             * reconciliation worker immediately changes the portal back to
+             * REJECTED/RETURNED/CANCELLED.
+             *
+             * For a resubmission, start a new Finance review cycle on the
+             * existing Oracle AP invoice by resetting the portal DFF status to
+             * Pending, clearing the old Finance remarks, and keeping ATTRIBUTE10
+             * tied to the portal PK_ID.
+             */
+            if (invoice.IsResubmission)
+            {
+                await RunOracleStepAsync(
+                    "PROCESS.RESUBMISSION_DFF_RESET",
+                    async () =>
+                    {
+                        await ResetExistingInvoiceForResubmissionAsync(
+                            existingInvoiceId.Value,
+                            invoice,
+                            ct
+                        );
+                    }
+                );
+            }
+
             return new OracleApProcessResult(
                 existingInvoiceId.Value,
                 null,
@@ -903,6 +935,31 @@ public sealed class OracleApInvoiceService(
                             AND
                                 aia.cancelled_date
                                 IS NULL
+
+                            /*
+                             * A rejected/cancelled/returned portal invoice must
+                             * release its receipt quantity for resubmission.
+                             * Oracle AP keeps the original invoice line and its
+                             * QUANTITY_INVOICED even when the portal DFF status
+                             * is rejected, so excluding only CANCELLED_DATE is
+                             * not enough. ATTRIBUTE11 is the portal approval
+                             * status and is therefore used here as well.
+                             */
+                            AND
+                                UPPER(
+                                    TRIM(
+                                        NVL(
+                                            aia.attribute11,
+                                            'PENDING'
+                                        )
+                                    )
+                                )
+                                NOT IN
+                                (
+                                    'REJECTED',
+                                    'CANCELLED',
+                                    'RETURNED'
+                                )
                         ),
                         0
                     ),
@@ -1800,6 +1857,129 @@ public sealed class OracleApInvoiceService(
         }
 
         return result;
+    }
+
+    // ============================================================
+    // RESET EXISTING AP INVOICE FOR PORTAL RESUBMISSION
+    // ============================================================
+
+    private async Task ResetExistingInvoiceForResubmissionAsync(
+        long oracleInvoiceId,
+        OracleApPortalInvoice invoice,
+        CancellationToken ct)
+    {
+        await using var connection =
+            await OpenAsync(ct);
+
+        using var transaction =
+            connection.BeginTransaction();
+
+        try
+        {
+            await using var command =
+                connection.CreateCommand();
+
+            Configure(command);
+            command.Transaction =
+                transaction;
+            command.BindByName =
+                true;
+
+            /*
+             * Only the Business Partner Portal DFF workflow fields are changed
+             * here. We deliberately do NOT update AP accounting, distributions,
+             * invoice amount, or receipt matching directly. Those are Oracle AP
+             * financial objects and must continue to be controlled by the
+             * supported AP process.
+             *
+             * ATTRIBUTE10 = Portal Invoice Id (PK_ID)
+             * ATTRIBUTE11 = Approval Status
+             * ATTRIBUTE13 = Finance Remarks
+             */
+            command.CommandText =
+                """
+                UPDATE ap_invoices_all
+                   SET attribute_category = 'BUSINESS PARTNER PORTAL',
+                       attribute10 = :portal_pk_id,
+                       attribute11 = 'Pending',
+                       attribute13 = NULL,
+                       last_update_date = SYSDATE,
+                       last_updated_by = :updated_by,
+                       last_update_login = :last_update_login
+                 WHERE invoice_id = :invoice_id
+                   AND vendor_id = :vendor_id
+                   AND cancelled_date IS NULL
+                """;
+
+            Add(
+                command,
+                "portal_pk_id",
+                OracleDbType.Varchar2,
+                invoice.PkId.ToString(CultureInfo.InvariantCulture)
+            );
+
+            Add(
+                command,
+                "updated_by",
+                OracleDbType.Int64,
+                GetLong("ORACLE_APPS_USER_ID")
+            );
+
+            Add(
+                command,
+                "last_update_login",
+                OracleDbType.Int64,
+                GetLong("ORACLE_APPS_USER_ID")
+            );
+
+            Add(
+                command,
+                "invoice_id",
+                OracleDbType.Int64,
+                oracleInvoiceId
+            );
+
+            Add(
+                command,
+                "vendor_id",
+                OracleDbType.Decimal,
+                invoice.VendorId
+            );
+
+            var affected =
+                await command.ExecuteNonQueryAsync(ct);
+
+            if (affected != 1)
+            {
+                throw new OracleApBusinessException(
+                    $"Unable to reset Oracle AP invoice {oracleInvoiceId} for resubmission. Updated rows: {affected}."
+                );
+            }
+
+            transaction.Commit();
+
+            logger.LogInformation(
+                "Existing Oracle AP invoice reset for portal resubmission. " +
+                "OracleInvoiceId={OracleInvoiceId}, InvoiceNumber={InvoiceNumber}, " +
+                "PortalPkId={PortalPkId}, NewApprovalStatus=Pending",
+                oracleInvoiceId,
+                invoice.InvoiceNumber,
+                invoice.PkId
+            );
+        }
+        catch
+        {
+            try
+            {
+                transaction.Rollback();
+            }
+            catch
+            {
+                // Preserve the original Oracle exception.
+            }
+
+            throw;
+        }
     }
 
     // ============================================================

@@ -177,6 +177,69 @@ public sealed class OracleReconciliationWorker(
                 var nextStatus =
                     Map(oracleInvoice);
 
+                var currentPortalStatus =
+                    (invoice.Status ?? string.Empty)
+                        .Trim()
+                        .ToUpperInvariant();
+
+                var currentIntegrationStatus =
+                    (invoice.IntegrationStatus ?? string.Empty)
+                        .Trim()
+                        .ToUpperInvariant();
+
+                var oracleApprovalStatus =
+                    (oracleInvoice.ApprovalStatus ?? string.Empty)
+                        .Trim()
+                        .ToUpperInvariant();
+
+                /*
+                 * IMPORTANT - RESUBMISSION STALE STATUS GUARD
+                 *
+                 * Immediately after a vendor resubmits an invoice, Oracle may
+                 * still return the previous workflow status (for example
+                 * REJECTED / RETURNED / CANCELLED) for the old Oracle invoice
+                 * until the new resubmission request has been processed.
+                 *
+                 * Do not let that stale Oracle status overwrite the portal's
+                 * RESUBMITTED state. As soon as Oracle moves to a new state
+                 * such as Pending / Approved / Paid, normal reconciliation
+                 * continues and the portal status is updated from Oracle.
+                 *
+                 * We intentionally key this guard on the portal status being
+                 * RESUBMITTED. Once Oracle advances to a non-stale state the
+                 * portal will no longer be RESUBMITTED, so future genuine
+                 * Oracle status changes will reconcile normally.
+                 */
+                var staleOracleStatusAfterResubmit =
+                    currentPortalStatus == "RESUBMITTED"
+                    &&
+                    (
+                        oracleApprovalStatus.Contains("REJECT")
+                        ||
+                        oracleApprovalStatus.Contains("RETURN")
+                        ||
+                        oracleApprovalStatus.Contains("REVERT")
+                        ||
+                        oracleApprovalStatus.Contains("CANCEL")
+                    );
+
+                if (staleOracleStatusAfterResubmit)
+                {
+                    logger.LogInformation(
+                        "Skipping stale Oracle status for resubmitted invoice. " +
+                        "Invoice={InvoiceNumber}, PortalStatus={PortalStatus}, " +
+                        "IntegrationStatus={IntegrationStatus}, OracleStatus={OracleStatus}, " +
+                        "OracleInvoiceId={OracleInvoiceId}",
+                        invoice.InvoiceNumber,
+                        invoice.Status,
+                        invoice.IntegrationStatus,
+                        oracleInvoice.ApprovalStatus,
+                        oracleInvoice.OracleInvoiceId
+                    );
+
+                    continue;
+                }
+
                 var now =
                     DateTimeOffset.UtcNow;
 

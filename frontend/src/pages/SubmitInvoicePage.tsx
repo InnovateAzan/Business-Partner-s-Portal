@@ -520,6 +520,20 @@ export function SubmitInvoicePage() {
       []
     );
 
+  /*
+   * Keep the rejected/returned invoice's original GRNs separately.
+   * The normal PO/GRN availability feed may omit them because the
+   * original Oracle invoice has already consumed the receipt quantity.
+   * They are still needed when the same invoice is being resubmitted.
+   */
+  const [
+    resubmitOriginalGrnNumbers,
+    setResubmitOriginalGrnNumbers,
+  ] =
+    useState<string[]>(
+      []
+    );
+
   const [
     invoiceNumber,
     setInvoiceNumber,
@@ -763,9 +777,16 @@ export function SubmitInvoicePage() {
             currentPoNumbers
           );
 
-          setSelected(
+          const originalGrns =
             data.grnNumbers ||
-              []
+            [];
+
+          setSelected(
+            originalGrns
+          );
+
+          setResubmitOriginalGrnNumbers(
+            originalGrns
           );
 
           setSelectedReceiptTransactionIds(
@@ -1216,32 +1237,50 @@ export function SubmitInvoicePage() {
               async (
                 po
               ) => {
+                const liveGrns =
+                  rows
+                    .filter(
+                      (
+                        r
+                      ) =>
+                        r.poNumber ===
+                          po &&
+                        r.grnNumber &&
+                        !pendingQc(
+                          r.inspectionStatus
+                        )
+                    )
+                    .map(
+                      (
+                        r
+                      ) =>
+                        r.grnNumber!
+                    );
+
+                /*
+                 * On resubmit the generic Oracle PO/GRN feed can omit
+                 * the invoice's original GRNs because they were already
+                 * consumed by the rejected/returned Oracle invoice.
+                 * Include the original GRNs explicitly so the backend can
+                 * restore only this invoice's own saved allocations.
+                 */
                 const grns = [
                   ...new Set(
-                    rows
-                      .filter(
-                        (
-                          r
-                        ) =>
-                          r.poNumber ===
-                            po &&
-                          r.grnNumber &&
-                          !pendingQc(
-                            r.inspectionStatus
-                          )
-                      )
-                      .map(
-                        (
-                          r
-                        ) =>
-                          r.grnNumber!
-                      )
+                    isResubmit
+                      ? [
+                          ...liveGrns,
+                          ...resubmitOriginalGrnNumbers,
+                        ]
+                      : liveGrns
                   ),
                 ];
 
                 return getMyReceiptLines(
                   po,
-                  grns
+                  grns,
+                  isResubmit
+                    ? id
+                    : undefined
                 );
               }
             )
@@ -1326,6 +1365,42 @@ export function SubmitInvoicePage() {
                 );
               }
             );
+
+            /*
+             * IMPORTANT:
+             * Also remove old GRN numbers from the rejected/returned
+             * invoice when those GRNs no longer contain an eligible
+             * Oracle receipt line.
+             *
+             * Previously only the receipt transaction IDs were filtered.
+             * The old GRN number could remain in `selected` and was then
+             * submitted again, causing errors such as:
+             * "GRN 24920 has no available quantity to invoice."
+             */
+            setSelected(
+              (
+                current
+              ) => {
+                const availableGrns =
+                  new Set(
+                    loadedLines.map(
+                      (
+                        line
+                      ) =>
+                        line.grnNumber
+                    )
+                  );
+
+                return current.filter(
+                  (
+                    grnNumber
+                  ) =>
+                    availableGrns.has(
+                      grnNumber
+                    )
+                );
+              }
+            );
           }
         }
       } catch (
@@ -1362,6 +1437,8 @@ export function SubmitInvoicePage() {
     selectedPoNumbers,
     searchParams,
     isResubmit,
+    id,
+    resubmitOriginalGrnNumbers,
   ]);
 
   // ============================================================
@@ -1827,50 +1904,6 @@ export function SubmitInvoicePage() {
       {error && (
         <div className="form-error">
           {error}
-        </div>
-      )}
-
-      {isResubmit && (
-        <div className="success-note">
-          <strong>
-            Reason for Return / Issue
-          </strong>
-
-          <div>
-            {searchParams.get("issue") ||
-              "Invoice was returned by Finance. Please review and resubmit."}
-          </div>
-
-          {searchParams.get("oracleRequestId") && (
-            <>
-              <strong>Oracle Request ID</strong>
-              <div>{searchParams.get("oracleRequestId")}</div>
-            </>
-          )}
-
-          {searchParams.get("integrationStatus") && (
-            <>
-              <strong>Integration Status</strong>
-              <div>{searchParams.get("integrationStatus")}</div>
-            </>
-          )}
-
-          <strong>
-            Current Status
-          </strong>
-
-          <div>
-            {resubmitStatus ||
-              "Returned for Correction"}
-          </div>
-
-          <strong>
-            Last Successful Step
-          </strong>
-
-          <div>
-            {lastSuccessfulStep}
-          </div>
         </div>
       )}
 

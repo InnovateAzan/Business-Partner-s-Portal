@@ -35,7 +35,57 @@ export async function completeVendorRegistration(payload:{challengeId:string;otp
 export async function getIntegrationQueue(){ const {data}=await api.get("/integration/status"); return data; }
 export async function retryIntegration(id:string){ const {data}=await api.post(`/integration/${id}/retry`); return data; }
 export async function getAuditLogs(){ const {data}=await api.get("/admin/audit"); return data; }
-export function getMyReceiptLines(poNumber:string,grnNumbers:string[]=[]){ const normalizedGrns=[...new Set(grnNumbers.map(x=>x.trim()).filter(Boolean))].sort(); const key=`${poNumber.trim()}|${normalizedGrns.join(",")}`; const pending=receiptLineRequests.get(key); if(pending)return pending; const request=api.get<OracleReceiptLine[]>("/oracle/receipt-lines/my",{params:{poNumber:poNumber.trim(),grnNumbers:normalizedGrns.join(",")}}).then(({data})=>data).finally(()=>receiptLineRequests.delete(key)); receiptLineRequests.set(key,request); return request; }
+export function getMyReceiptLines(
+  poNumber: string,
+  grnNumbers: string[] = [],
+  invoiceId?: string
+) {
+  const normalizedGrns = [
+    ...new Set(
+      grnNumbers
+        .map((x) => x.trim())
+        .filter(Boolean)
+    ),
+  ].sort();
+
+  const normalizedInvoiceId =
+    invoiceId?.trim() || "";
+
+  const key =
+    `${poNumber.trim()}|${normalizedGrns.join(",")}|${normalizedInvoiceId}`;
+
+  const pending =
+    receiptLineRequests.get(key);
+
+  if (pending) {
+    return pending;
+  }
+
+  const request = api
+    .get<OracleReceiptLine[]>(
+      "/oracle/receipt-lines/my",
+      {
+        params: {
+          poNumber: poNumber.trim(),
+          grnNumbers: normalizedGrns.join(","),
+          ...(normalizedInvoiceId
+            ? { invoiceId: normalizedInvoiceId }
+            : {}),
+        },
+      }
+    )
+    .then(({ data }) => data)
+    .finally(() =>
+      receiptLineRequests.delete(key)
+    );
+
+  receiptLineRequests.set(
+    key,
+    request
+  );
+
+  return request;
+}
 export async function getLiveDashboard(){ const {data}=await api.get("/dashboard/live"); return data; }
 
 export type InvoiceDocumentDto = {
