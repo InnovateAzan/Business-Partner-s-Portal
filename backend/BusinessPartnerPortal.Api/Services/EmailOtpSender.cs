@@ -696,8 +696,8 @@ public sealed class EmailOtpSender
 
         await SendEmailAsync(
             email,
-            "Pakistan Cables Portal Device Verification Code",
-            $"<p>Your device verification code is <strong>{WebUtility.HtmlEncode(otp)}</strong>.</p><p>This code expires in 10 minutes.</p>",
+            "Pakistan Cables Portal Device Registration Code",
+            $"<p>Your one-time device registration code is <strong>{WebUtility.HtmlEncode(otp)}</strong>.</p><p>This code expires in 10 minutes. After successful verification, this device will be registered for future sign-ins.</p>",
             ct);
     }
 

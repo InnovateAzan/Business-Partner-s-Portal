@@ -817,7 +817,8 @@ export function SubmitInvoicePage() {
           );
 
           setDescription(
-            data.description ||
+            data.description ??
+              data.remarks ??
               ""
           );
 

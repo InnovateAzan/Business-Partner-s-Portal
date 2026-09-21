@@ -60,6 +60,7 @@ public static class InvoiceEndpoints
                                 x.PoNumber,
                                 x.GrnNumbers,
                                 x.InvoiceType,
+                                x.Description,
                                 x.Remarks
                             })
                         .ToListAsync(ct);
@@ -88,8 +89,8 @@ public static class InvoiceEndpoints
 
                             x.InvoiceType,
 
-                            description =
-                                x.Remarks
+                            description = x.Description,
+                            remarks = x.Remarks
                         }));
             });
 
@@ -173,8 +174,8 @@ public static class InvoiceEndpoints
                                     })
                                 .ToListAsync(ct),
 
-                        description =
-                            invoice.Remarks
+                        description = invoice.Description,
+                        remarks = invoice.Remarks
                     });
             });
 
@@ -1448,7 +1449,7 @@ public static class InvoiceEndpoints
             invoice.InvoiceType =
                 invoiceType;
 
-            invoice.Remarks =
+            invoice.Description =
                 description.Length > 0
                     ?
                     description
@@ -1499,7 +1500,7 @@ public static class InvoiceEndpoints
                     InvoiceType =
                         invoiceType,
 
-                    Remarks =
+                    Description =
                         description.Length > 0
                             ?
                             description
@@ -1926,8 +1927,7 @@ public static class InvoiceEndpoints
                             invoiceType =
                                 invoice.InvoiceType,
 
-                            description =
-                                invoice.Remarks
+                            description = invoice.Description
                         });
 
             var outboxId =

@@ -59,7 +59,7 @@ export function VerifyDevicePage() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (otp.length !== 6) { setError("Please enter the complete 6 digit OTP."); return; }
+    if (otp.length !== 6) { setError("Please enter the complete 6 digit registration code."); return; }
     setBusy(true); setError("");
     try {
       const session = await verifyLoginOtp(challengeId, otp);
@@ -88,8 +88,8 @@ export function VerifyDevicePage() {
         <div className="auth-brand-logo otp-brand-logo">
           <img src="/pakistan-cables-logo.png" alt="Pakistan Cables" />
         </div>
-        <h1>OTP Verification</h1>
-        <p>Enter the OTP sent to <strong>{maskedEmail}</strong></p>
+        <h1>Device Registration</h1>
+        <p>Enter the one-time registration code sent to <strong>{maskedEmail}</strong></p>
         <form onSubmit={submit}>
           <div className="otp-boxes" onPaste={pasteOtp}>
             {digits.map((digit, index) => (
@@ -101,7 +101,7 @@ export function VerifyDevicePage() {
           </div>
           {error && <div className="form-error otp-error">{error}</div>}
           <div className="otp-resend">
-            {seconds > 0 ? <>Resend code in <strong>00:{String(seconds).padStart(2, "0")}</strong></> : <button type="button" onClick={resend} disabled={resending}>{resending ? "Sending..." : "Resend OTP"}</button>}
+            {seconds > 0 ? <>Resend code in <strong>00:{String(seconds).padStart(2, "0")}</strong></> : <button type="button" onClick={resend} disabled={resending}>{resending ? "Sending..." : "Resend Code"}</button>}
           </div>
           <button className="primary-btn otp-verify-btn" disabled={busy || otp.length !== 6}>{busy ? "Verifying..." : "Verify"}</button>
         </form>

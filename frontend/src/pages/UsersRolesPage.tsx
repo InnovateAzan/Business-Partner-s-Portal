@@ -174,6 +174,9 @@ export function UsersRolesPage() {
   const [userDeleting, setUserDeleting] =
     useState(false);
 
+  const [userSetupEmailSending, setUserSetupEmailSending] =
+    useState(false);
+
   const [userError, setUserError] =
     useState("");
 
@@ -455,6 +458,46 @@ export function UsersRolesPage() {
     }
   }
 
+  async function resendPasswordSetupEmail() {
+    if (!userForm.id) {
+      return;
+    }
+
+    const selectedUser = users.find(
+      (user) => user.id === userForm.id
+    );
+
+    if (
+      selectedUser &&
+      selectedUser.userType.toUpperCase() !== "INTERNAL"
+    ) {
+      setUserError(
+        "Password setup email can be resent here only for internal users."
+      );
+      return;
+    }
+
+    setUserError("");
+    setUserSetupEmailSending(true);
+
+    try {
+      const response = await api.post(
+        `/admin/users/${userForm.id}/resend-setup-email`
+      );
+
+      window.alert(
+        response.data?.message ||
+          "Password setup email has been sent successfully."
+      );
+    } catch (error) {
+      setUserError(
+        getApiErrorMessage(error)
+      );
+    } finally {
+      setUserSetupEmailSending(false);
+    }
+  }
+
   async function deleteUser() {
     if (!userForm.id) {
       return;
@@ -518,15 +561,6 @@ export function UsersRolesPage() {
       }
 
       if (
-        !userForm.id &&
-        userForm.password.length < 10
-      ) {
-        throw new Error(
-          "Temporary password must be at least 10 characters."
-        );
-      }
-
-      if (
         userForm.roleCodes.length === 0
       ) {
         throw new Error(
@@ -542,13 +576,13 @@ export function UsersRolesPage() {
           userForm.email.trim(),
 
         userType:
-          userForm.userType,
+          userForm.id ? userForm.userType : "INTERNAL",
 
         roleCodes:
           userForm.roleCodes,
 
         password:
-          userForm.password,
+          userForm.id ? userForm.password : null,
 
         isActive:
           userForm.isActive,
@@ -1197,6 +1231,8 @@ export function UsersRolesPage() {
 
                   <input
                     type="email"
+                    name={userForm.id ? "edit-user-email" : "new-internal-user-email"}
+                    autoComplete="off"
                     value={
                       userForm.email
                     }
@@ -1217,60 +1253,67 @@ export function UsersRolesPage() {
                 <label>
                   User Type
 
-                  <select
-                    value={
-                      userForm.userType
-                    }
-                    onChange={(
-                      event
-                    ) =>
-                      setUserForm({
-                        ...userForm,
-                        userType:
-                          event.target
-                            .value,
-                      })
-                    }
-                  >
-                    <option value="INTERNAL">
-                      INTERNAL
-                    </option>
+                  {userForm.id ? (
+                    <select
+                      value={
+                        userForm.userType
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setUserForm({
+                          ...userForm,
+                          userType:
+                            event.target
+                              .value,
+                        })
+                      }
+                    >
+                      <option value="INTERNAL">
+                        INTERNAL
+                      </option>
 
-                    <option value="ADMIN">
-                      ADMIN
-                    </option>
+                      <option value="ADMIN">
+                        ADMIN
+                      </option>
 
-                    <option value="VENDOR">
-                      VENDOR
-                    </option>
-                  </select>
+                      <option value="VENDOR">
+                        VENDOR
+                      </option>
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value="INTERNAL"
+                      readOnly
+                      aria-readonly="true"
+                    />
+                  )}
                 </label>
 
-                <label>
-                  {userForm.id
-                    ? "New Password (Optional)"
-                    : "Temporary Password"}
+                {userForm.id && (
+                  <label>
+                    New Password (Optional)
 
-                  <input
-                    type="password"
-                    value={
-                      userForm.password
-                    }
-                    onChange={(
-                      event
-                    ) =>
-                      setUserForm({
-                        ...userForm,
-                        password:
-                          event.target
-                            .value,
-                      })
-                    }
-                    required={
-                      !userForm.id
-                    }
-                  />
-                </label>
+                    <input
+                      type="password"
+                      value={
+                        userForm.password
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setUserForm({
+                          ...userForm,
+                          password:
+                            event.target
+                              .value,
+                        })
+                      }
+                      autoComplete="new-password"
+                    />
+                  </label>
+                )}
               </div>
 
               <div className="admin-form-section">
@@ -1279,7 +1322,14 @@ export function UsersRolesPage() {
                 </h4>
 
                 <div className="role-selection-grid">
-                  {roles.map(
+                  {(userForm.id
+                    ? roles
+                    : roles.filter((role) =>
+                        ["FINANCE", "SUPPLY_CHAIN"].includes(
+                          role.code.toUpperCase()
+                        )
+                      )
+                  ).map(
                     (role) => (
                       <label
                         key={
@@ -1436,19 +1486,39 @@ export function UsersRolesPage() {
 
               <div className="admin-modal-actions">
                 {userForm.id && (
-                  <button
-                    type="button"
-                    className="danger-btn"
-                    disabled={
-                      userSaving ||
-                      userDeleting
-                    }
-                    onClick={deleteUser}
-                  >
-                    {userDeleting
-                      ? "Deleting..."
-                      : "Delete User"}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="danger-btn"
+                      disabled={
+                        userSaving ||
+                        userDeleting ||
+                        userSetupEmailSending
+                      }
+                      onClick={deleteUser}
+                    >
+                      {userDeleting
+                        ? "Deleting..."
+                        : "Delete User"}
+                    </button>
+
+                    {userForm.userType.toUpperCase() === "INTERNAL" && (
+                      <button
+                        type="button"
+                        className="secondary-btn"
+                        disabled={
+                          userSaving ||
+                          userDeleting ||
+                          userSetupEmailSending
+                        }
+                        onClick={resendPasswordSetupEmail}
+                      >
+                        {userSetupEmailSending
+                          ? "Sending..."
+                          : "Resend Password Setup Email"}
+                      </button>
+                    )}
+                  </>
                 )}
 
                 <span style={{ flex: 1 }} />
@@ -1458,7 +1528,8 @@ export function UsersRolesPage() {
                   className="secondary-btn"
                   disabled={
                     userSaving ||
-                    userDeleting
+                    userDeleting ||
+                    userSetupEmailSending
                   }
                   onClick={() =>
                     setUserModalOpen(
@@ -1474,7 +1545,8 @@ export function UsersRolesPage() {
                   className="primary-btn"
                   disabled={
                     userSaving ||
-                    userDeleting
+                    userDeleting ||
+                    userSetupEmailSending
                   }
                 >
                   {userSaving

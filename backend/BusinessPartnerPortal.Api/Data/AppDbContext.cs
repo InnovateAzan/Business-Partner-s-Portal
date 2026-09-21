@@ -338,6 +338,7 @@ public sealed class AppDbContext(
                 Map(e, "integration_status", x => x.IntegrationStatus);
                 Map(e, "oracle_invoice_id", x => x.OracleInvoiceId);
                 Map(e, "submission_date", x => x.SubmissionDate);
+                Map(e, "description", x => x.Description);
                 Map(e, "remarks", x => x.Remarks);
                 Map(e, "created_by", x => x.CreatedBy);
                 Map(e, "created_at", x => x.CreatedAt);

@@ -179,6 +179,8 @@ public sealed class Invoice
 
     public DateTimeOffset? SubmissionDate { get; set; }
 
+    public string? Description { get; set; }
+
     public string? Remarks { get; set; }
 
     public Guid CreatedBy { get; set; }

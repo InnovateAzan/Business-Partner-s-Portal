@@ -34,7 +34,7 @@ type NotificationItem = {
 };
 
 export function PortalLayout() {
-  const { user, logout } = useAuth();
+  const { user, logout, hasPermission } = useAuth();
 
   const navigate =
     useNavigate();
@@ -241,118 +241,64 @@ export function PortalLayout() {
   // SIDEBAR
   // ============================================================
 
-  const items: MenuItem[] =
-    isVendor
+  const can = (permission: string) =>
+    hasPermission(permission);
+
+  const items: MenuItem[] = isVendor
+    ? [
+        ...(can("DASHBOARD.VIEW")
+          ? [["/vendor", "Dashboard", "dashboard"] as MenuItem]
+          : []),
+        ...(can("PO.VIEW")
+          ? [["/purchase-orders", "Purchase Orders", "po"] as MenuItem]
+          : []),
+        ...(can("INVOICE.CREATE")
+          ? [["/invoices/new", "Submit Invoice", "invoice"] as MenuItem]
+          : []),
+        ...(can("INVOICE.VIEW_OWN") || can("INVOICE.VIEW_ALL")
+          ? [["/invoices", "Invoice History", "history"] as MenuItem]
+          : []),
+        ...(can("PAYMENT.VIEW")
+          ? [["/payments", "Payments", "payment"] as MenuItem]
+          : []),
+      ]
+    : isAdmin
       ? [
-          [
-            "/vendor",
-            "Dashboard",
-            "dashboard",
-          ],
-
-          [
-            "/purchase-orders",
-            "Purchase Orders",
-            "po",
-          ],
-
-          [
-            "/invoices/new",
-            "Submit Invoice",
-            "invoice",
-          ],
-
-          [
-            "/invoices",
-            "Invoice History",
-            "history",
-          ],
-
-          [
-            "/payments",
-            "Payments",
-            "payment",
-          ],
+          ["/admin", "Dashboard", "dashboard"],
+          ["/admin/users-roles", "Users & Roles", "admin"],
+          ["/admin/vendors", "Vendor Access", "po"],
+          ["/integration", "Integration Support", "integration"],
+          ["/admin/audit", "Audit Logs", "history"],
         ]
-      : isAdmin
+      : isFinance
         ? [
-            [
-              "/admin",
-              "Dashboard",
-              "dashboard",
-            ],
-
-            [
-              "/admin/users-roles",
-              "Users & Roles",
-              "admin",
-            ],
-
-            [
-              "/admin/vendors",
-              "Vendor Access",
-              "po",
-            ],
-
-            [
-              "/integration",
-              "Integration Support",
-              "integration",
-            ],
-
-            [
-              "/admin/audit",
-              "Audit Logs",
-              "history",
-            ],
-
-            [
-              "/admin/system",
-              "System Configuration",
-              "support",
-            ],
+            ...(can("DASHBOARD.VIEW")
+              ? [["/internal", "Dashboard", "dashboard"] as MenuItem]
+              : []),
+            ...(can("INVOICE.VIEW_ALL")
+              ? [["/finance/invoices", "Invoice Records", "invoice"] as MenuItem]
+              : []),
+            ...(can("INTEGRATION.VIEW")
+              ? [["/integration", "Integration Issues", "integration"] as MenuItem]
+              : []),
           ]
-        : isFinance
+        : isSupplyChain
           ? [
-              [
-                "/internal",
-                "Dashboard",
-                "dashboard",
-              ],
-              [
-                "/finance/invoices",
-                "Invoice Records",
-                "invoice",
-              ],
-              [
-                "/integration",
-                "Integration Issues",
-                "integration",
-              ],
+              ...(can("DASHBOARD.VIEW")
+                ? [["/internal", "Dashboard", "dashboard"] as MenuItem]
+                : []),
+              ...(can("VENDOR.MANAGE")
+                ? [["/supply-chain/vendors", "Vendor Access", "admin"] as MenuItem]
+                : []),
             ]
-          : isSupplyChain
-            ? [
-                [
-                  "/internal",
-                  "Dashboard",
-                  "dashboard",
-                ],
-                [
-                  "/supply-chain/vendors",
-                  "Vendor Access",
-                  "admin",
-                ],
-              ]
-            : [
-                [
-                  "/internal",
-                  "Dashboard",
-                  "dashboard",
-                ],
-                ...(user.permissions.includes("INTEGRATION.VIEW")
-                  ? [["/integration", "Integration Support", "integration"] as MenuItem]
-                  : []),
-              ];
+          : [
+              ...(can("DASHBOARD.VIEW")
+                ? [["/internal", "Dashboard", "dashboard"] as MenuItem]
+                : []),
+              ...(can("INTEGRATION.VIEW")
+                ? [["/integration", "Integration Support", "integration"] as MenuItem]
+                : []),
+            ];
 
   // ============================================================
   // NOTIFICATIONS

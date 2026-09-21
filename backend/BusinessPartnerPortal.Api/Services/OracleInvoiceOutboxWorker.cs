@@ -864,7 +864,7 @@ public sealed class OracleInvoiceOutboxWorker(
                     invoice.PoNumber,
                     invoice.GrnNumbers,
                     invoice.InvoiceType,
-                    invoice.Remarks,
+                    invoice.Description,
                     invoice.Status,
                     vendor.OracleVendorId
                 }
@@ -998,7 +998,7 @@ public sealed class OracleInvoiceOutboxWorker(
             row.InvoiceAmount,
             row.CurrencyCode,
             row.InvoiceType,
-            row.Remarks,
+            row.Description,
 
             string.Equals(
                 row.Status?.Trim(),

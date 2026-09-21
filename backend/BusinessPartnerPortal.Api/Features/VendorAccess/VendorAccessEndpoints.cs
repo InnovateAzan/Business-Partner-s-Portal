@@ -4,9 +4,6 @@ using BusinessPartnerPortal.Api.Domain;
 using BusinessPartnerPortal.Api.Security;
 using BusinessPartnerPortal.Api.Services;
 
-using System.Security.Cryptography;
-using System.Text;
-
 using Microsoft.EntityFrameworkCore;
 
 namespace BusinessPartnerPortal.Api.Features.VendorAccess;
@@ -129,6 +126,7 @@ public static class VendorAccessEndpoints
                 Guid userId,
                 CurrentUser current,
                 AppDbContext db,
+                PasswordSetupTokenService passwordTokens,
                 EmailOtpSender emailSender,
                 IConfiguration config,
                 CancellationToken ct) =>
@@ -154,24 +152,74 @@ public static class VendorAccessEndpoints
                         "Only vendor accounts can receive a password setup email.");
                 }
 
-                var now = DateTimeOffset.UtcNow;
-                var previous = await db.PasswordResetTokens.Where(x => x.UserId == userId && x.UsedAt == null && x.ExpiresAt > now).ToListAsync(ct);
-                previous.ForEach(x => x.UsedAt = now);
-                var rawToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-                db.PasswordResetTokens.Add(new PasswordResetToken { Id = Guid.NewGuid(), UserId = userId, TokenHash = Hash(rawToken), ExpiresAt = now.AddMinutes(30), CreatedAt = now });
-                await db.SaveChangesAsync(ct);
+                if (!vendorUser.User.IsActive)
+                {
+                    throw new ApiException(
+                        409,
+                        "Vendor portal access is disabled. Enable access before sending a password setup email.");
+                }
 
-                var setupUrl = $"{(config["FRONTEND_URL"] ?? "http://localhost:5173").TrimEnd('/')}/reset-password?token={Uri.EscapeDataString(rawToken)}";
+                /*
+                 * IMPORTANT:
+                 * This is a password SETUP email, not the generic Forgot Password flow.
+                 * Use the same PasswordSetupTokenService that is used during initial
+                 * vendor onboarding so the recipient always lands on /set-password.
+                 *
+                 * The token is tied to the user's current password state. As soon as
+                 * the password is changed successfully, previously issued setup links
+                 * become invalid automatically.
+                 */
+                var token =
+                    passwordTokens.Create(
+                        vendorUser.User);
+
+                var frontendUrl =
+                    (
+                        config["FRONTEND_URL"]
+                        ??
+                        "http://localhost:5173"
+                    )
+                    .TrimEnd('/');
+
+                var setupUrl =
+                    $"{frontendUrl}/set-password?token={Uri.EscapeDataString(token)}";
+
                 try
                 {
-                    await emailSender.SendPortalAccessAsync(vendorUser.User.Email, vendorUser.Vendor.VendorName, setupUrl, ct);
-                    await WriteAuditAsync(db, current.UserId, vendorUser.Vendor.Id, userId, "VENDOR_ACCOUNT_SETUP_EMAIL_RESENT", ct);
-                    return Results.Ok(new { message = "Password setup email has been sent successfully." });
+                    await emailSender.SendPortalAccessAsync(
+                        vendorUser.User.Email,
+                        vendorUser.Vendor.VendorName,
+                        setupUrl,
+                        ct);
+
+                    await WriteAuditAsync(
+                        db,
+                        current.UserId,
+                        vendorUser.Vendor.Id,
+                        userId,
+                        "VENDOR_ACCOUNT_SETUP_EMAIL_RESENT",
+                        ct);
+
+                    return Results.Ok(
+                        new
+                        {
+                            message =
+                                "Password setup email has been sent successfully."
+                        });
                 }
                 catch
                 {
-                    await WriteAuditAsync(db, current.UserId, vendorUser.Vendor.Id, userId, "VENDOR_ACCOUNT_SETUP_EMAIL_RESEND_FAILED", ct);
-                    throw new ApiException(500, "Email could not be sent. Please check the vendor email address or email configuration.");
+                    await WriteAuditAsync(
+                        db,
+                        current.UserId,
+                        vendorUser.Vendor.Id,
+                        userId,
+                        "VENDOR_ACCOUNT_SETUP_EMAIL_RESEND_FAILED",
+                        ct);
+
+                    throw new ApiException(
+                        500,
+                        "Email could not be sent. Please check the vendor email address or email configuration.");
                 }
             });
 
@@ -580,7 +628,6 @@ public static class VendorAccessEndpoints
         }
     }
 
-    private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 
     private static Task<int> WriteAuditAsync(AppDbContext db, Guid adminUserId, Guid vendorId, Guid vendorUserId, string action, CancellationToken ct) =>
         db.Database.ExecuteSqlInterpolatedAsync($@"INSERT INTO audit.audit_logs (user_id, vendor_id, action, entity_type, entity_id, created_at) VALUES ({adminUserId}, {vendorId}, {action}, {"VendorUser"}, {vendorUserId}, {DateTimeOffset.UtcNow})", ct);

@@ -13,13 +13,21 @@ import type {
   OracleSupplier,
   PortalInvoice,
 } from "../types";
-import {
-  formatPakistanFiscalWindowStart,
-  isInPakistanFiscalWindow,
-} from "../utils/pakistanFiscalWindow";
 
 const money = (v: number | null | undefined) =>
   `PKR ${Number(v || 0).toLocaleString()}`;
+
+const formatDate = (value?: string | null) => {
+  if (!value) return "-";
+
+  const date = new Date(value);
+
+  return date.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+};
 
 const qcLabel = (s?: string | null) => {
   const x = (s || "").toUpperCase();
@@ -73,6 +81,38 @@ const statusClass = (s?: string | null) => {
   return "blue";
 };
 
+/*
+ * Dashboard-only invoice status label.
+ *
+ * The backend / Oracle status is NOT changed.
+ * Invoice History, Payments and reconciliation keep using
+ * their existing status values.
+ *
+ * On the vendor dashboard Recent Invoices table only,
+ * pending workflow statuses are presented as "Submitted".
+ */
+const dashboardInvoiceStatus = (
+  status?: string | null
+) => {
+  const normalized = (status || "")
+    .trim()
+    .toUpperCase()
+    .replace(/_/g, " ");
+
+  if (
+    normalized === "PENDING" ||
+    normalized === "PENDING FOR APPROVAL" ||
+    normalized === "PENDING APPROVAL" ||
+    normalized === "SENT TO ORACLE" ||
+    normalized === "SUBMITTED" ||
+    normalized === "RESUBMITTED"
+  ) {
+    return "Submitted";
+  }
+
+  return status || "Submitted";
+};
+
 export function VendorDashboard() {
   const [supplier, setSupplier] =
     useState<OracleSupplier | null>(null);
@@ -110,83 +150,33 @@ export function VendorDashboard() {
       );
   }, []);
 
-  const fiscalNow = useMemo(() => new Date(), []);
-
-  const visibleRows = useMemo(
-    () =>
-      rows.filter((x) =>
-        isInPakistanFiscalWindow(
-          x.receiptDate ||
-            x.poCreationDate ||
-            x.poApprovedDate,
-          fiscalNow
-        )
-      ),
-    [fiscalNow, rows]
-  );
-
-  const dashboardInvoices = useMemo(
-    () =>
-      invoices.filter((x) =>
-        isInPakistanFiscalWindow(
-          x.invoiceDate,
-          fiscalNow
-        )
-      ),
-    [fiscalNow, invoices]
-  );
-
-  const dashboardPortalInvoices = useMemo(
-    () =>
-      portalInvoices.filter((x) =>
-        isInPakistanFiscalWindow(
-          x.submissionDate || x.invoiceDate,
-          fiscalNow
-        )
-      ),
-    [fiscalNow, portalInvoices]
-  );
-
   const poMap = useMemo(
     () =>
       new Map(
-        visibleRows
+        rows
           .filter((x) => x.poNumber)
           .map((x) => [
             x.poNumber,
             x,
           ])
       ),
-    [visibleRows]
+    [rows]
   );
 
-  const grns = visibleRows.filter(
-    (x) =>
-      x.grnNumber &&
-      (x.quantityAvailableToInvoice || 0) > 0 &&
-      ![
-        "PENDING",
-        "PENDING QC",
-        "PENDING_QC",
-        "AWAITING INSPECTION",
-        "NOT RECEIVED",
-        "REJECTED",
-      ].includes((x.inspectionStatus || "").toUpperCase())
-  );
-
-  const availableGrnNumbers = new Set(
-    grns.map((x) => x.grnNumber)
-  );
+  const grns =
+    rows.filter(
+      (x) => x.grnNumber
+    );
 
   const submittedKeys =
     new Set(
-      dashboardInvoices.map((x) =>
+      invoices.map((x) =>
         x.invoiceNumber.toLowerCase()
       )
     );
 
   const pendingPortal =
-    dashboardPortalInvoices.filter(
+    portalInvoices.filter(
       (x) =>
         !submittedKeys.has(
           (
@@ -196,7 +186,7 @@ export function VendorDashboard() {
     );
 
   const paid =
-    dashboardInvoices.filter((x) =>
+    invoices.filter((x) =>
       (
         x.paymentStatus || ""
       )
@@ -205,7 +195,7 @@ export function VendorDashboard() {
     );
 
   const returned =
-    dashboardInvoices.filter((x) =>
+    invoices.filter((x) =>
       (
         x.approvalStatus || ""
       )
@@ -214,7 +204,7 @@ export function VendorDashboard() {
     );
 
   const cancelled =
-    dashboardInvoices.filter((x) =>
+    invoices.filter((x) =>
       (
         x.approvalStatus || ""
       )
@@ -230,7 +220,7 @@ export function VendorDashboard() {
     );
 
   const totalInv =
-    dashboardInvoices.reduce(
+    invoices.reduce(
       (a, x) =>
         a + x.invoiceAmount,
       0
@@ -247,9 +237,6 @@ export function VendorDashboard() {
       <div className="last-update">
         Last updated:{" "}
         {new Date().toLocaleString()}
-        <span className="vendor-data-window">
-          Data from {formatPakistanFiscalWindowStart()}
-        </span>
       </div>
 
       <section className="kpi-grid">
@@ -270,15 +257,13 @@ export function VendorDashboard() {
           ],
           [
             "GRNs Available",
-            availableGrnNumbers.size,
+            grns.length,
             money(
               grns.reduce(
                 (a, x) =>
                   a +
-                  (x.quantityAvailableToInvoice ??
-                    x.grnReceivedQuantity ??
-                    0) *
-                    (x.unitPrice || 0),
+                  (x.grnReceivedQuantity ||
+                    0),
                 0
               )
             ),
@@ -287,7 +272,7 @@ export function VendorDashboard() {
           ],
           [
             "Invoices Submitted",
-            dashboardInvoices.length +
+            invoices.length +
               pendingPortal.filter(
                 (x) =>
                   x.status !==
@@ -375,7 +360,7 @@ export function VendorDashboard() {
             <div className="donut">
               <div>
                 <strong>
-                  {dashboardInvoices.length}
+                  {invoices.length}
                 </strong>
 
                 <span>
@@ -388,7 +373,7 @@ export function VendorDashboard() {
               {[
                 [
                   "Submitted",
-                  dashboardInvoices.filter((x) =>
+                  invoices.filter((x) =>
                     (
                       x.approvalStatus ||
                       ""
@@ -401,7 +386,7 @@ export function VendorDashboard() {
                 ],
                 [
                   "Pending Finance",
-                  dashboardInvoices.filter((x) =>
+                  invoices.filter((x) =>
                     (
                       x.approvalStatus ||
                       ""
@@ -439,8 +424,8 @@ export function VendorDashboard() {
 
         {/* =========================================
             RECENT INVOICES
-            Oracle Integration replaced with
-            Payment Status
+            Dashboard-only status display mapping:
+            pending workflow statuses => Submitted
         ========================================== */}
 
         <div className="panel recent">
@@ -480,56 +465,61 @@ export function VendorDashboard() {
             </thead>
 
             <tbody>
-              {dashboardInvoices
+              {invoices
                 .slice(0, 5)
-                .map((x) => (
-                  <tr
-                    key={
-                      x.invoiceNumber
-                    }
-                  >
-                    <td>
-                      {
+                .map((x) => {
+                  const dashboardStatus =
+                    dashboardInvoiceStatus(
+                      x.approvalStatus
+                    );
+
+                  return (
+                    <tr
+                      key={
                         x.invoiceNumber
                       }
-                    </td>
+                    >
+                      <td>
+                        {
+                          x.invoiceNumber
+                        }
+                      </td>
 
-                    <td>
-                      {x.invoiceDate ||
-                        "-"}
-                    </td>
+                      <td>
+                        {formatDate(x.invoiceDate)}
+                      </td>
 
-                    <td>
-                      {Number(
-                        x.invoiceAmount
-                      ).toLocaleString()}
-                    </td>
+                      <td>
+                        {Number(
+                          x.invoiceAmount
+                        ).toLocaleString()}
+                      </td>
 
-                    <td>
-                      <span
-                        className={`status ${statusClass(
-                          x.approvalStatus
-                        )}`}
-                      >
-                        {x.approvalStatus ||
-                          "Submitted"}
-                      </span>
-                    </td>
+                      <td>
+                        <span
+                          className={`status ${statusClass(
+                            dashboardStatus
+                          )}`}
+                        >
+                          {dashboardStatus}
+                        </span>
+                      </td>
 
-                    <td>
-                      <span
-                        className={`status ${statusClass(
-                          x.paymentStatus
-                        )}`}
-                      >
-                        {x.paymentStatus ||
-                          "Pending"}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                      <td>
+                        <span
+                          className={`status ${statusClass(
+                            x.paymentStatus
+                          )}`}
+                        >
+                          {x.paymentStatus ||
+                            "Pending"}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
 
-              {!dashboardInvoices.length && (
+              {!invoices.length && (
                 <tr>
                   <td
                     colSpan={5}
@@ -625,7 +615,7 @@ export function VendorDashboard() {
               GRNs
             </h3>
 
-            <Link to="/purchase-orders">
+            <Link to="/grns">
               View All →
             </Link>
           </div>
@@ -706,11 +696,11 @@ export function VendorDashboard() {
           </div>
 
           <h3>
-            Submit Invoice
+            Create Invoice
           </h3>
 
           <p>
-            Submit a new invoice
+            Create a new invoice
             against your eligible
             POs and GRNs.
           </p>
@@ -719,7 +709,7 @@ export function VendorDashboard() {
             className="primary-btn"
             to="/invoices/new"
           >
-            ＋ Submit Invoice
+            ＋ Create New Invoice
           </Link>
         </div>
       </section>
@@ -754,7 +744,7 @@ export function VendorDashboard() {
 
               <b>
                 {money(
-                  dashboardInvoices.reduce(
+                  invoices.reduce(
                     (a, x) =>
                       a +
                       (x.outstandingAmount ||
@@ -788,7 +778,7 @@ export function VendorDashboard() {
             </thead>
 
             <tbody>
-              {dashboardInvoices
+              {invoices
                 .slice(0, 5)
                 .map((x) => (
                   <tr

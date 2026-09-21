@@ -20,6 +20,50 @@ type SetupInfo = {
   expiresAt: string;
 };
 
+type PasswordEyeIconProps = {
+  visible: boolean;
+};
+
+function PasswordEyeIcon({
+  visible,
+}: PasswordEyeIconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle
+        cx="12"
+        cy="12"
+        r="2.75"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+      />
+      {!visible && (
+        <path
+          d="M4 4 20 20"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+        />
+      )}
+    </svg>
+  );
+}
+
 export function SetPasswordPage() {
   const navigate =
     useNavigate();
@@ -414,6 +458,16 @@ export function SetPasswordPage() {
               <button
                 type="button"
                 className="set-password-eye-btn"
+                aria-label={
+                  showPassword
+                    ? "Hide password"
+                    : "Show password"
+                }
+                title={
+                  showPassword
+                    ? "Hide password"
+                    : "Show password"
+                }
                 onClick={() =>
                   setShowPassword(
                     (
@@ -423,9 +477,11 @@ export function SetPasswordPage() {
                   )
                 }
               >
-                {showPassword
-                  ? "◉"
-                  : "◎"}
+                <PasswordEyeIcon
+                  visible={
+                    showPassword
+                  }
+                />
               </button>
             </div>
           </label>
@@ -527,6 +583,16 @@ export function SetPasswordPage() {
               <button
                 type="button"
                 className="set-password-eye-btn"
+                aria-label={
+                  showConfirmPassword
+                    ? "Hide password"
+                    : "Show password"
+                }
+                title={
+                  showConfirmPassword
+                    ? "Hide password"
+                    : "Show password"
+                }
                 onClick={() =>
                   setShowConfirmPassword(
                     (
@@ -536,9 +602,11 @@ export function SetPasswordPage() {
                   )
                 }
               >
-                {showConfirmPassword
-                  ? "◉"
-                  : "◎"}
+                <PasswordEyeIcon
+                  visible={
+                    showConfirmPassword
+                  }
+                />
               </button>
             </div>
           </label>

@@ -2,6 +2,7 @@ using BusinessPartnerPortal.Api.Common;
 using BusinessPartnerPortal.Api.Data;
 using BusinessPartnerPortal.Api.Domain;
 using BusinessPartnerPortal.Api.Security;
+using BusinessPartnerPortal.Api.Services;
 
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -392,24 +393,61 @@ public static class AdminEndpoints
                 UserMutationRequest request,
                 CurrentUser current,
                 AppDbContext db,
+                PasswordSetupTokenService passwordTokens,
+                EmailOtpSender emailSender,
+                IConfiguration config,
                 CancellationToken ct) =>
             {
                 DemandAdmin(current);
-
-                if (
-                    string.IsNullOrWhiteSpace(
-                        request.Password) ||
-                    request.Password.Length < 10)
-                {
-                    throw new ApiException(
-                        400,
-                        "Temporary password must be at least 10 characters.");
-                }
 
                 var email =
                     request.Email
                         .Trim()
                         .ToLowerInvariant();
+
+                if (string.IsNullOrWhiteSpace(request.FullName))
+                {
+                    throw new ApiException(
+                        400,
+                        "Full name is required.");
+                }
+
+                if (string.IsNullOrWhiteSpace(email))
+                {
+                    throw new ApiException(
+                        400,
+                        "Email is required.");
+                }
+
+                var requestedRoles =
+                    (request.RoleCodes ?? new List<string>())
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Select(x => x.Trim().ToUpperInvariant())
+                        .Distinct()
+                        .ToList();
+
+                var allowedInternalRoles =
+                    new HashSet<string>(
+                        new[]
+                        {
+                            "FINANCE",
+                            "SUPPLY_CHAIN"
+                        },
+                        StringComparer.OrdinalIgnoreCase);
+
+                if (requestedRoles.Count == 0)
+                {
+                    throw new ApiException(
+                        400,
+                        "Select Finance / AP or Supply Chain role.");
+                }
+
+                if (requestedRoles.Any(x => !allowedInternalRoles.Contains(x)))
+                {
+                    throw new ApiException(
+                        400,
+                        "Add User can only onboard Finance / AP and Supply Chain internal users.");
+                }
 
                 var exists =
                     await db.Users
@@ -441,15 +479,16 @@ public static class AdminEndpoints
                             email,
 
                         UserType =
-                            request.UserType
-                                .Trim()
-                                .ToUpperInvariant(),
+                            "INTERNAL",
+
+                        PasswordHash =
+                            null,
 
                         IsActive =
                             request.IsActive,
 
                         IsSuperAdmin =
-                            request.IsSuperAdmin,
+                            false,
 
                         CreatedAt =
                             DateTimeOffset.UtcNow,
@@ -458,12 +497,6 @@ public static class AdminEndpoints
                             DateTimeOffset.UtcNow
                     };
 
-                user.PasswordHash =
-                    new PasswordHasher<User>()
-                        .HashPassword(
-                            user,
-                            request.Password);
-
                 db.Users.Add(user);
 
                 await db.SaveChangesAsync(ct);
@@ -471,7 +504,7 @@ public static class AdminEndpoints
                 await ReplaceRoles(
                     db,
                     user.Id,
-                    request.RoleCodes,
+                    requestedRoles,
                     ct);
 
                 await Audit(
@@ -482,11 +515,35 @@ public static class AdminEndpoints
                     user.Id,
                     ct);
 
+                var token =
+                    passwordTokens.Create(
+                        user);
+
+                var frontendUrl =
+                    (
+                        config["FRONTEND_URL"]
+                        ??
+                        "http://localhost:5173"
+                    )
+                    .TrimEnd('/');
+
+                var setupUrl =
+                    $"{frontendUrl}/set-password?token={Uri.EscapeDataString(token)}";
+
+                await emailSender.SendPortalAccessAsync(
+                    user.Email,
+                    user.FullName,
+                    setupUrl,
+                    ct);
+
                 return Results.Ok(
                     new
                     {
                         id =
-                            user.Id
+                            user.Id,
+
+                        passwordSetupEmailSent =
+                            true
                     });
             });
 
@@ -604,7 +661,105 @@ public static class AdminEndpoints
             });
 
         // =========================================================
+        // RESEND PASSWORD SETUP EMAIL - INTERNAL USER
+        // =========================================================
+
+        group.MapPost(
+            "/users/{userId:guid}/resend-setup-email",
+            async (
+                Guid userId,
+                CurrentUser current,
+                AppDbContext db,
+                PasswordSetupTokenService passwordTokens,
+                EmailOtpSender emailSender,
+                IConfiguration config,
+                CancellationToken ct) =>
+            {
+                DemandAdmin(current);
+
+                var user =
+                    await db.Users
+                        .FirstOrDefaultAsync(
+                            x =>
+                                x.Id ==
+                                userId,
+                            ct)
+                    ?? throw new ApiException(
+                        404,
+                        "User not found.");
+
+                if (
+                    !string.Equals(
+                        user.UserType,
+                        "INTERNAL",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new ApiException(
+                        400,
+                        "Password setup email can be resent here only for internal users.");
+                }
+
+                if (!user.IsActive)
+                {
+                    throw new ApiException(
+                        409,
+                        "Enable this user before sending a password setup email.");
+                }
+
+                var token =
+                    passwordTokens.Create(
+                        user);
+
+                var frontendUrl =
+                    (
+                        config["FRONTEND_URL"]
+                        ??
+                        "http://localhost:5173"
+                    )
+                    .TrimEnd('/');
+
+                var setupUrl =
+                    $"{frontendUrl}/set-password?token={Uri.EscapeDataString(token)}";
+
+                try
+                {
+                    await emailSender.SendPortalAccessAsync(
+                        user.Email,
+                        user.FullName,
+                        setupUrl,
+                        ct);
+                }
+                catch
+                {
+                    throw new ApiException(
+                        500,
+                        "Password setup email could not be sent. Please check the user's email address or email configuration.");
+                }
+
+                await Audit(
+                    db,
+                    current.UserId,
+                    "USER_PASSWORD_SETUP_EMAIL_RESENT",
+                    "User",
+                    user.Id,
+                    ct);
+
+                return Results.Ok(
+                    new
+                    {
+                        message =
+                            "Password setup email has been sent successfully."
+                    });
+            });
+
+        // =========================================================
         // DELETE USER
+        //
+        // Administrator-only permanent deletion.
+        // Historical business records are retained. References that
+        // cannot be null (invoice creator / document uploader) are
+        // reassigned to the administrator performing the deletion.
+        // Nullable historical actor references are cleared.
         // =========================================================
 
         group.MapDelete(
@@ -633,31 +788,180 @@ public static class AdminEndpoints
                         404,
                         "User not found.");
 
+                await using var transaction =
+                    await db.Database
+                        .BeginTransactionAsync(ct);
+
                 try
                 {
+                    // -------------------------------------------------
+                    // Preserve historical/business rows while removing
+                    // the FK dependency on the account being deleted.
+                    // -------------------------------------------------
+
+                    await db.Database.ExecuteSqlInterpolatedAsync(
+                        $"""
+                        UPDATE security.users
+                        SET created_by = NULL
+                        WHERE created_by = {userId}
+                        """,
+                        ct);
+
+                    await db.Database.ExecuteSqlInterpolatedAsync(
+                        $"""
+                        UPDATE security.user_roles
+                        SET assigned_by = NULL
+                        WHERE assigned_by = {userId}
+                        """,
+                        ct);
+
+                    await db.Database.ExecuteSqlInterpolatedAsync(
+                        $"""
+                        UPDATE security.user_permission_overrides
+                        SET granted_by = NULL
+                        WHERE granted_by = {userId}
+                        """,
+                        ct);
+
+                    // invoice.invoices.created_by is NOT NULL, so retain
+                    // the invoice and assign ownership history to the
+                    // administrator performing this controlled deletion.
+                    await db.Database.ExecuteSqlInterpolatedAsync(
+                        $"""
+                        UPDATE invoice.invoices
+                        SET created_by = {current.UserId}
+                        WHERE created_by = {userId}
+                        """,
+                        ct);
+
+                    // invoice.documents.uploaded_by is also NOT NULL.
+                    await db.Database.ExecuteSqlInterpolatedAsync(
+                        $"""
+                        UPDATE invoice.documents
+                        SET uploaded_by = {current.UserId}
+                        WHERE uploaded_by = {userId}
+                        """,
+                        ct);
+
+                    await db.Database.ExecuteSqlInterpolatedAsync(
+                        $"""
+                        UPDATE invoice.invoice_status_history
+                        SET changed_by = NULL
+                        WHERE changed_by = {userId}
+                        """,
+                        ct);
+
+                    await db.Database.ExecuteSqlInterpolatedAsync(
+                        $"""
+                        UPDATE audit.audit_logs
+                        SET user_id = NULL
+                        WHERE user_id = {userId}
+                        """,
+                        ct);
+
+                    // -------------------------------------------------
+                    // Remove account-owned security / access records.
+                    // -------------------------------------------------
+
+                    var userRoles =
+                        await db.UserRoles
+                            .Where(x => x.UserId == userId)
+                            .ToListAsync(ct);
+
+                    db.UserRoles.RemoveRange(userRoles);
+
+                    var permissionOverrides =
+                        await db.UserPermissionOverrides
+                            .Where(x => x.UserId == userId)
+                            .ToListAsync(ct);
+
+                    db.UserPermissionOverrides.RemoveRange(
+                        permissionOverrides);
+
+                    var vendorMappings =
+                        await db.VendorUsers
+                            .Where(x => x.UserId == userId)
+                            .ToListAsync(ct);
+
+                    db.VendorUsers.RemoveRange(vendorMappings);
+
+                    var resetTokens =
+                        await db.PasswordResetTokens
+                            .Where(x => x.UserId == userId)
+                            .ToListAsync(ct);
+
+                    db.PasswordResetTokens.RemoveRange(resetTokens);
+
+                    var otpChallenges =
+                        await db.LoginOtpChallenges
+                            .Where(x => x.UserId == userId)
+                            .ToListAsync(ct);
+
+                    db.LoginOtpChallenges.RemoveRange(otpChallenges);
+
+                    var trustedDevices =
+                        await db.TrustedDevices
+                            .Where(x => x.UserId == userId)
+                            .ToListAsync(ct);
+
+                    db.TrustedDevices.RemoveRange(trustedDevices);
+
+                    var idempotencyRequests =
+                        await db.IdempotencyRequests
+                            .Where(x => x.UserId == userId)
+                            .ToListAsync(ct);
+
+                    db.IdempotencyRequests.RemoveRange(
+                        idempotencyRequests);
+
+                    await db.Database.ExecuteSqlInterpolatedAsync(
+                        $"""
+                        DELETE FROM notification.notifications
+                        WHERE user_id = {userId}
+                        """,
+                        ct);
+
+                    await db.SaveChangesAsync(ct);
+
+                    // -------------------------------------------------
+                    // Finally remove the actual portal identity.
+                    // -------------------------------------------------
+
                     db.Users.Remove(user);
                     await db.SaveChangesAsync(ct);
+
+                    await Audit(
+                        db,
+                        current.UserId,
+                        "USER_DELETED",
+                        "User",
+                        userId,
+                        ct);
+
+                    await transaction.CommitAsync(ct);
                 }
-                catch (DbUpdateException)
+                catch (DbUpdateException ex)
                 {
+                    await transaction.RollbackAsync(ct);
+
                     throw new ApiException(
                         409,
-                        "This user has historical business or audit records and cannot be permanently deleted. Disable the user instead to preserve history.");
+                        "The user is still referenced by another protected record and could not be permanently deleted. " +
+                        "No data was changed. Database error: " +
+                        (ex.InnerException?.Message ?? ex.Message));
                 }
-
-                await Audit(
-                    db,
-                    current.UserId,
-                    "USER_DELETED",
-                    "User",
-                    userId,
-                    ct);
+                catch
+                {
+                    await transaction.RollbackAsync(ct);
+                    throw;
+                }
 
                 return Results.Ok(
                     new
                     {
                         userId,
-                        message = "User deleted successfully."
+                        message =
+                            "User permanently deleted successfully by administrator. Historical business records were preserved."
                     });
             });
 

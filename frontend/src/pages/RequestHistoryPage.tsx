@@ -1,18 +1,57 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   deletePortalInvoice,
+  downloadInvoiceDocument,
+  getInvoiceDocuments,
   getInvoiceIssue,
   getMyPortalInvoices,
+  getPortalInvoice,
+  viewInvoiceDocument,
 } from "../api/portal";
 import { DataTableToolbar } from "../components/DataTableToolbar";
 import type { PortalInvoice } from "../types";
+import type { InvoiceDocumentDto } from "../api/portal";
 import { exportRowsToCsv } from "../utils/exportCsv";
 
 type InvoicePresentation = {
   status: string;
   issue?: boolean;
 };
+
+function formatDate(value?: string | null) {
+  if (!value) return "-";
+
+  const datePart = value.substring(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datePart);
+
+  if (match) {
+    const [, year, month, day] = match;
+    const date = new Date(
+      Number(year),
+      Number(month) - 1,
+      Number(day)
+    );
+
+    return date.toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
 
 function presentInvoice(row: PortalInvoice): InvoicePresentation {
   const status = (row.status || "").toUpperCase();
@@ -139,11 +178,21 @@ export function RequestHistoryPage() {
   const [statusFilter, setStatusFilter] = useState("");
 
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [issueLoading, setIssueLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(
     null
   );
+
+  const [detailInvoice, setDetailInvoice] =
+    useState<PortalInvoice | null>(null);
+  const [detailDocuments, setDetailDocuments] =
+    useState<InvoiceDocumentDto[]>([]);
+  const [detailLoading, setDetailLoading] =
+    useState(false);
+  const [detailError, setDetailError] =
+    useState("");
 
   async function loadRows() {
     const data = await getMyPortalInvoices();
@@ -219,7 +268,7 @@ export function RequestHistoryPage() {
     return rows.filter((row) => {
       const visibleText = [
         row.invoiceNumber,
-        row.invoiceDate || "-",
+        formatDate(row.invoiceDate),
         row.poNumber || "-",
         Number(
           row.invoiceAmount || 0
@@ -227,6 +276,7 @@ export function RequestHistoryPage() {
         presentInvoice(row).status,
         row.grnNumbers?.join(", ") || "-",
         row.description || "-",
+        row.remarks || "-",
       ]
         .join(" ")
         .toLowerCase();
@@ -250,6 +300,7 @@ export function RequestHistoryPage() {
         "PO",
         "Amount",
         "Status",
+        "Description",
         "Remarks",
         "GRNs",
         "Action",
@@ -261,6 +312,7 @@ export function RequestHistoryPage() {
         Number(row.invoiceAmount || 0),
         presentInvoice(row).status,
         row.description || "-",
+        row.remarks || "-",
         row.grnNumbers?.join(", ") || "-",
 
         presentInvoice(row).status === "Rejected"
@@ -318,6 +370,72 @@ export function RequestHistoryPage() {
       setIssueLoading(false);
     }
   }
+
+  async function openInvoiceDetails(
+    row: PortalInvoice
+  ) {
+    setDetailLoading(true);
+    setDetailError("");
+    setDetailInvoice(row);
+    setDetailDocuments([]);
+
+    try {
+      const [invoice, documents] = await Promise.all([
+        getPortalInvoice(row.id),
+        getInvoiceDocuments(),
+      ]);
+
+      setDetailInvoice(invoice);
+      setDetailDocuments(
+        documents.filter(
+          (document) =>
+            document.invoiceId === row.id
+        )
+      );
+    } catch (error) {
+      console.error(
+        "Failed to load invoice details:",
+        error
+      );
+
+      setDetailError(
+        "Unable to load the complete invoice details."
+      );
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  function closeInvoiceDetails() {
+    setDetailInvoice(null);
+    setDetailDocuments([]);
+    setDetailError("");
+  }
+
+  /*
+   * Notifications can link to /invoices?invoiceId=<portal invoice id>.
+   * When that happens, automatically open the same detail popup that
+   * the user gets by double-clicking an Invoice History row.
+   */
+  useEffect(() => {
+    const invoiceId = searchParams.get("invoiceId");
+
+    if (!invoiceId || rows.length === 0) {
+      return;
+    }
+
+    const row = rows.find((item) => item.id === invoiceId);
+
+    if (!row) {
+      return;
+    }
+
+    void openInvoiceDetails(row);
+
+    const nextSearchParams = new URLSearchParams(searchParams);
+    nextSearchParams.delete("invoiceId");
+    setSearchParams(nextSearchParams, { replace: true });
+  }, [rows, searchParams, setSearchParams]);
 
   async function deleteInvoice(
     row: PortalInvoice
@@ -387,6 +505,7 @@ export function RequestHistoryPage() {
             <th>PO</th>
             <th>Amount</th>
             <th>Status</th>
+            <th>Description</th>
             <th>Remarks</th>
             <th>GRNs</th>
             <th>Action</th>
@@ -395,13 +514,20 @@ export function RequestHistoryPage() {
 
         <tbody>
           {filteredRows.map((row) => (
-            <tr key={row.id}>
+            <tr
+              key={row.id}
+              className="invoice-history-row"
+              onDoubleClick={() =>
+                openInvoiceDetails(row)
+              }
+              title="Double-click to view complete submission details"
+            >
               <td>
                 {row.invoiceNumber}
               </td>
 
               <td>
-                {row.invoiceDate || "-"}
+                {formatDate(row.invoiceDate)}
               </td>
 
               <td>
@@ -424,8 +550,12 @@ export function RequestHistoryPage() {
                 </span>
               </td>
 
-              <td>
+              <td className="invoice-history-description">
                 {row.description || "-"}
+              </td>
+
+              <td>
+                {row.remarks || "-"}
               </td>
 
               <td>
@@ -485,7 +615,7 @@ export function RequestHistoryPage() {
           {!filteredRows.length && (
             <tr>
               <td
-                colSpan={8}
+                colSpan={9}
                 className="empty"
               >
                 {rows.length
@@ -496,6 +626,179 @@ export function RequestHistoryPage() {
           )}
         </tbody>
       </table>
+
+      {detailInvoice && (
+        <div
+          className="invoice-detail-modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeInvoiceDetails();
+            }
+          }}
+        >
+          <section
+            className="invoice-detail-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Invoice ${detailInvoice.invoiceNumber} details`}
+          >
+            <div className="invoice-detail-modal-head">
+              <div>
+                <h3>Invoice Submission Details</h3>
+                <p>
+                  Complete information submitted by the vendor.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="invoice-detail-close"
+                onClick={closeInvoiceDetails}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            {detailLoading && (
+              <div className="invoice-detail-loading">
+                Loading invoice details...
+              </div>
+            )}
+
+            {detailError && (
+              <div className="form-error">
+                {detailError}
+              </div>
+            )}
+
+            {!detailLoading && (
+              <>
+                <div className="invoice-detail-grid">
+                  <div>
+                    <span>Invoice #</span>
+                    <strong>{detailInvoice.invoiceNumber}</strong>
+                  </div>
+
+                  <div>
+                    <span>Invoice Date</span>
+                    <strong>{formatDate(detailInvoice.invoiceDate)}</strong>
+                  </div>
+
+                  <div>
+                    <span>Invoice Type</span>
+                    <strong>{detailInvoice.invoiceType || "-"}</strong>
+                  </div>
+
+                  <div>
+                    <span>Amount</span>
+                    <strong>
+                      PKR {Number(detailInvoice.invoiceAmount || 0).toLocaleString()}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span>Status</span>
+                    <strong>{presentInvoice(detailInvoice).status}</strong>
+                  </div>
+
+                  <div>
+                    <span>Integration Status</span>
+                    <strong>{detailInvoice.integrationStatus || "-"}</strong>
+                  </div>
+
+                  <div className="invoice-detail-wide">
+                    <span>Purchase Order(s)</span>
+                    <strong>
+                      {detailInvoice.poNumbers?.length
+                        ? detailInvoice.poNumbers.join(", ")
+                        : detailInvoice.poNumber || "-"}
+                    </strong>
+                  </div>
+
+                  <div className="invoice-detail-wide">
+                    <span>GRN(s)</span>
+                    <strong>
+                      {detailInvoice.grnNumbers?.join(", ") || "-"}
+                    </strong>
+                  </div>
+
+                  <div className="invoice-detail-full">
+                    <span>Description</span>
+                    <strong>{detailInvoice.description || "-"}</strong>
+                  </div>
+
+                  <div className="invoice-detail-full">
+                    <span>Finance Remarks</span>
+                    <strong>{detailInvoice.remarks || "-"}</strong>
+                  </div>
+                </div>
+
+                <div className="invoice-detail-documents">
+                  <div className="invoice-detail-section-title">
+                    <h4>Submitted Attachments</h4>
+                    <span>
+                      {detailDocuments.length} file
+                      {detailDocuments.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+
+                  {detailDocuments.length > 0 ? (
+                    <div className="invoice-detail-document-list">
+                      {detailDocuments.map((document) => (
+                        <div
+                          key={document.id}
+                          className="invoice-detail-document"
+                        >
+                          <div>
+                            <strong>{document.originalFileName}</strong>
+                            <span>
+                              {document.documentType === "INVOICE"
+                                ? "Invoice Copy"
+                                : document.documentType === "DELIVERY_CHALLAN"
+                                  ? "Delivery Challan"
+                                  : document.documentType}
+                              {" · "}
+                              {(document.fileSize / 1024).toFixed(1)} KB
+                            </span>
+                          </div>
+
+                          <div className="invoice-detail-document-actions">
+                            <button
+                              type="button"
+                              className="table-btn"
+                              onClick={() =>
+                                viewInvoiceDocument(document)
+                              }
+                            >
+                              View
+                            </button>
+
+                            <button
+                              type="button"
+                              className="table-btn"
+                              onClick={() =>
+                                downloadInvoiceDocument(document)
+                              }
+                            >
+                              Download
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="invoice-detail-no-docs">
+                      No attachments were submitted with this invoice.
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }

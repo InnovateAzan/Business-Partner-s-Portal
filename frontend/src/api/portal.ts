@@ -5,6 +5,7 @@ export async function getMySupplier(){ const {data}=await api.get<OracleSupplier
 export async function getMyPoGrns(){ const {data}=await api.get<OraclePoGrn[]>("/oracle/po-grns/my"); return data; }
 export async function getMyOracleInvoices(){ const {data}=await api.get<OracleInvoice[]>("/oracle/invoices/my"); return data; }
 export async function getMyPortalInvoices(){ const {data}=await api.get<PortalInvoice[]>("/invoices/my"); return data; }
+export async function getPortalInvoice(id:string){ const {data}=await api.get<PortalInvoice>(`/invoices/${id}`); return data; }
 export async function submitInvoice(payload:FormData,idempotencyKey?:string){ const {data}=await api.post("/invoices",payload,{headers:{"Content-Type":"multipart/form-data",...(idempotencyKey?{"Idempotency-Key":idempotencyKey}:{})}}); return data; }
 export async function saveDraft(payload:FormData){ const {data}=await api.post("/invoices/draft",payload,{headers:{"Content-Type":"multipart/form-data"}}); return data; }
 export async function resubmitInvoice(

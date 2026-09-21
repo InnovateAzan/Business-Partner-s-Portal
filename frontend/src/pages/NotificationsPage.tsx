@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import type { NotificationItem } from "../types";
 
 export function NotificationsPage() {
+  const navigate = useNavigate();
   const [rows, setRows] = useState<NotificationItem[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [deletingAll, setDeletingAll] = useState(false);
@@ -29,6 +31,36 @@ export function NotificationsPage() {
       await load();
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const openNotification = async (notification: NotificationItem) => {
+    if (!notification.isRead) {
+      try {
+        await api.put(`/notifications/${notification.id}/read`);
+        setRows((current) =>
+          current.map((item) =>
+            item.id === notification.id
+              ? { ...item, isRead: true }
+              : item
+          )
+        );
+      } catch (error) {
+        console.error("Unable to mark notification as read:", error);
+      }
+    }
+
+    const entityType = (notification.entityType || "").toLowerCase();
+
+    if (entityType === "invoice" && notification.entityId) {
+      navigate(
+        `/invoices?invoiceId=${encodeURIComponent(notification.entityId)}`
+      );
+      return;
+    }
+
+    if (notification.actionUrl?.startsWith("/")) {
+      navigate(notification.actionUrl);
     }
   };
 
@@ -80,6 +112,14 @@ export function NotificationsPage() {
     <div className="page-card">
       <div className="page-card-head">
         <div>
+          <button
+            type="button"
+            className="table-btn invoice-back-btn"
+            onClick={() => navigate(-1)}
+          >
+            ← Back
+          </button>
+
           <h2>Notifications</h2>
           <p>Portal, invoice and integration notifications.</p>
         </div>
@@ -119,6 +159,21 @@ export function NotificationsPage() {
                   : "notification-row unread"
               }
               key={notification.id}
+              onClick={() => void openNotification(notification)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  void openNotification(notification);
+                }
+              }}
+              title={
+                notification.entityId || notification.actionUrl
+                  ? "Open related request"
+                  : "Mark notification as read"
+              }
+              style={{ cursor: "pointer" }}
             >
               <div className="notification-row-content">
                 <b>{notification.title}</b>
@@ -133,7 +188,10 @@ export function NotificationsPage() {
                   <button
                     type="button"
                     className="table-btn"
-                    onClick={() => markRead(notification.id)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void markRead(notification.id);
+                    }}
                     disabled={busyId === notification.id}
                   >
                     Mark read
@@ -145,7 +203,10 @@ export function NotificationsPage() {
                   className="notification-delete-btn"
                   title="Delete notification"
                   aria-label="Delete notification"
-                  onClick={() => deleteNotification(notification.id)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void deleteNotification(notification.id);
+                  }}
                   disabled={busyId === notification.id}
                 >
                   <svg

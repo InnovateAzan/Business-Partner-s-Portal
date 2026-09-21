@@ -60,7 +60,9 @@ public static class NotificationEndpoints
                         message,
                         is_read,
                         created_at,
-                        action_url
+                        action_url,
+                        entity_type,
+                        entity_id
                     FROM notification.notifications
                     WHERE user_id=@uid
                     ORDER BY created_at DESC
@@ -88,7 +90,13 @@ public static class NotificationEndpoints
                             createdAt = r.GetFieldValue<DateTimeOffset>(4),
                             actionUrl = r.IsDBNull(5)
                                 ? null
-                                : r.GetString(5)
+                                : r.GetString(5),
+                            entityType = r.IsDBNull(6)
+                                ? null
+                                : r.GetString(6),
+                            entityId = r.IsDBNull(7)
+                                ? (Guid?)null
+                                : r.GetGuid(7)
                         });
                 }
 

@@ -85,7 +85,6 @@ import {
   AuditPage,
   UserManagementPage,
   RolesPermissionsPage,
-  SystemConfigurationPage,
 } from "./pages/AdminUtilityPages";
 
 import {
@@ -202,168 +201,103 @@ export default function App() {
               }
             />
 
-            {/* =============================================
-                VENDOR ROUTES
-            ============================================= */}
+            {/* VENDOR ROUTES */}
+            <Route element={<ProtectedRoute allowed={["VENDOR"]} requiredPermission="DASHBOARD.VIEW" />}>
+              <Route path="/vendor" element={<VendorDashboard />} />
+            </Route>
+
+            <Route element={<ProtectedRoute allowed={["VENDOR"]} requiredPermission="PO.VIEW" />}>
+              <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
+            </Route>
+
+            <Route element={<ProtectedRoute allowed={["VENDOR"]} requiredPermission="GRN.VIEW" />}>
+              <Route path="/grns" element={<GrnsPage />} />
+            </Route>
+
+            <Route element={<ProtectedRoute allowed={["VENDOR"]} requiredPermission="INVOICE.CREATE" />}>
+              <Route path="/invoices/new" element={<SubmitInvoicePage />} />
+            </Route>
+
+            <Route element={<ProtectedRoute allowed={["VENDOR"]} requiredPermission="INVOICE.RESUBMIT" />}>
+              <Route path="/invoices/:id/resubmit" element={<SubmitInvoicePage />} />
+            </Route>
 
             <Route
-              path="/vendor"
               element={
-                <VendorDashboard />
+                <ProtectedRoute
+                  allowed={["VENDOR"]}
+                  requiredAnyPermission={["INVOICE.VIEW_OWN", "INVOICE.VIEW_ALL"]}
+                />
               }
-            />
+            >
+              <Route path="/invoices" element={<RequestHistoryPage />} />
+            </Route>
+
+            <Route element={<ProtectedRoute allowed={["VENDOR"]} requiredPermission="PAYMENT.VIEW" />}>
+              <Route path="/payments" element={<PaymentsPage />} />
+            </Route>
+
+            <Route element={<ProtectedRoute allowed={["VENDOR"]} />}>
+              <Route path="/vendor-profile" element={<VendorProfilePage />} />
+            </Route>
+
+            <Route path="/support" element={<SupportPage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
+
+            {/* INTERNAL ROUTES */}
+            <Route
+              element={
+                <ProtectedRoute
+                  allowed={["INTERNAL"]}
+                  requiredPermission="DASHBOARD.VIEW"
+                />
+              }
+            >
+              <Route path="/internal" element={<InternalDashboard />} />
+            </Route>
 
             <Route
-              path="/purchase-orders"
               element={
-                <PurchaseOrdersPage />
+                <ProtectedRoute
+                  allowed={["INTERNAL"]}
+                  requiredPermission="INVOICE.VIEW_ALL"
+                />
               }
-            />
+            >
+              <Route path="/finance/invoices" element={<FinanceInvoiceRecordsPage />} />
+            </Route>
 
             <Route
-              path="/grns"
               element={
-                <GrnsPage />
+                <ProtectedRoute
+                  allowed={["INTERNAL"]}
+                  requiredPermission="VENDOR.MANAGE"
+                />
               }
-            />
+            >
+              <Route path="/supply-chain/vendors" element={<VendorAccessPage />} />
+            </Route>
 
             <Route
-              path="/invoices/new"
               element={
-                <SubmitInvoicePage />
+                <ProtectedRoute
+                  allowed={["INTERNAL", "ADMIN"]}
+                  requiredPermission="INTEGRATION.VIEW"
+                />
               }
-            />
+            >
+              <Route path="/integration" element={<IntegrationSupportPage />} />
+            </Route>
 
-            <Route
-              path="/invoices/:id/resubmit"
-              element={
-                <SubmitInvoicePage />
-              }
-            />
-
-            <Route
-              path="/invoices"
-              element={
-                <RequestHistoryPage />
-              }
-            />
-
-            <Route
-              path="/payments"
-              element={
-                <PaymentsPage />
-              }
-            />
-
-            <Route
-              path="/vendor-profile"
-              element={
-                <VendorProfilePage />
-              }
-            />
-
-
-            <Route
-              path="/support"
-              element={
-                <SupportPage />
-              }
-            />
-
-            <Route
-              path="/notifications"
-              element={
-                <NotificationsPage />
-              }
-            />
-
-            {/* =============================================
-                INTERNAL ROUTES
-            ============================================= */}
-
-            <Route
-              path="/internal"
-              element={
-                <InternalDashboard />
-              }
-            />
-
-            <Route
-              path="/finance/invoices"
-              element={
-                <FinanceInvoiceRecordsPage />
-              }
-            />
-
-            <Route
-              path="/supply-chain/vendors"
-              element={
-                <VendorAccessPage />
-              }
-            />
-
-
-            <Route
-              path="/integration"
-              element={
-                <IntegrationSupportPage />
-              }
-            />
-
-            {/* =============================================
-                ADMIN ROUTES
-            ============================================= */}
-
-            <Route
-              path="/admin"
-              element={
-                <AdminDashboard />
-              }
-            />
-
-            {/* NEW COMBINED USERS & ROLES PAGE */}
-            <Route
-              path="/admin/users-roles"
-              element={
-                <UsersRolesPage />
-              }
-            />
-
-            {/* Existing routes retained for compatibility */}
-            <Route
-              path="/admin/users"
-              element={
-                <UserManagementPage />
-              }
-            />
-
-            <Route
-              path="/admin/roles"
-              element={
-                <RolesPermissionsPage />
-              }
-            />
-
-            <Route
-              path="/admin/vendors"
-              element={
-                <VendorAccessPage />
-              }
-            />
-
-            <Route
-              path="/admin/audit"
-              element={
-                <AuditPage />
-              }
-            />
-
-            <Route
-              path="/admin/system"
-              element={
-                <SystemConfigurationPage />
-              }
-            />
+            {/* ADMIN ROUTES */}
+            <Route element={<ProtectedRoute allowed={["ADMIN"]} />}>
+              <Route path="/admin" element={<AdminDashboard />} />
+              <Route path="/admin/users-roles" element={<UsersRolesPage />} />
+              <Route path="/admin/users" element={<UserManagementPage />} />
+              <Route path="/admin/roles" element={<RolesPermissionsPage />} />
+              <Route path="/admin/vendors" element={<VendorAccessPage />} />
+              <Route path="/admin/audit" element={<AuditPage />} />
+            </Route>
           </Route>
         </Route>
 

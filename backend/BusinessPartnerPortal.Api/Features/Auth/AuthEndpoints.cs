@@ -271,16 +271,26 @@ public static class AuthEndpoints
                 }
 
                 // ====================================================
-                // OPTIONAL VENDOR DEVICE OTP
+                // ONE-TIME DEVICE REGISTRATION OTP
+                // Vendor and internal users must register an untrusted
+                // device once. A valid trusted-device cookie skips OTP.
                 // ====================================================
 
                 if (
                     DeviceOtpEnabled
                     &&
-                    string.Equals(
-                        user.UserType,
-                        "VENDOR",
-                        StringComparison.OrdinalIgnoreCase
+                    (
+                        string.Equals(
+                            user.UserType,
+                            "VENDOR",
+                            StringComparison.OrdinalIgnoreCase
+                        )
+                        ||
+                        string.Equals(
+                            user.UserType,
+                            "INTERNAL",
+                            StringComparison.OrdinalIgnoreCase
+                        )
                     )
                 )
                 {
