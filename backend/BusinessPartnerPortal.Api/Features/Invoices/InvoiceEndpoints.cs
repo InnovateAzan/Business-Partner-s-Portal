@@ -786,6 +786,17 @@ public static class InvoiceEndpoints
                 :
                 (DateOnly?)null;
 
+        if (
+            invoiceDate.HasValue &&
+            invoiceDate.Value >
+            DateOnly.FromDateTime(
+                DateTime.Today))
+        {
+            throw new ApiException(
+                400,
+                "Invoice date cannot be in the future.");
+        }
+
         var invoiceAmount =
             decimal.TryParse(
                 form["invoiceAmount"]

@@ -174,12 +174,7 @@ public static class VendorAccessEndpoints
                         vendorUser.User);
 
                 var frontendUrl =
-                    (
-                        config["FRONTEND_URL"]
-                        ??
-                        "http://localhost:5173"
-                    )
-                    .TrimEnd('/');
+                    FrontendUrlResolver.Resolve(config);
 
                 var setupUrl =
                     $"{frontendUrl}/set-password?token={Uri.EscapeDataString(token)}";

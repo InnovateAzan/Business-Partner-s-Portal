@@ -1,5 +1,6 @@
 using System.Data;
 using BusinessPartnerPortal.Api.Data;
+using BusinessPartnerPortal.Api.Domain;
 using BusinessPartnerPortal.Api.Oracle;
 using BusinessPartnerPortal.Api.Security;
 using Microsoft.EntityFrameworkCore;
@@ -156,6 +157,9 @@ public static class DashboardEndpoints
                 var sixMonthStart =
                     monthStart.AddMonths(-5);
 
+                var twelveMonthStart =
+                    monthStart.AddMonths(-11);
+
                 var vendors =
                     await db.Vendors
                         .AsNoTracking()
@@ -214,6 +218,16 @@ public static class DashboardEndpoints
                     await db.Payments
                         .AsNoTracking()
                         .ToListAsync(ct);
+
+                // Finance approval turnaround is calculated from the
+                // immutable invoice status history so later payment or
+                // reconciliation updates do not distort the approval time.
+                var invoiceStatusHistory =
+                    canFinance
+                        ? await db.InvoiceStatusHistory
+                            .AsNoTracking()
+                            .ToListAsync(ct)
+                        : new List<InvoiceStatusHistory>();
 
                 static string[] SplitCsv(string? value) =>
                     string.IsNullOrWhiteSpace(value)
@@ -425,6 +439,110 @@ public static class DashboardEndpoints
                                             x.IntegrationStatus,
                                             x.OracleInvoiceId) ==
                                         "Approved")
+                        })
+                        .ToList();
+
+                var invoiceById =
+                    invoices.ToDictionary(
+                        x => x.Id,
+                        x => x);
+
+                var historyByInvoice =
+                    invoiceStatusHistory
+                        .GroupBy(x => x.InvoiceId)
+                        .ToDictionary(
+                            g => g.Key,
+                            g => g.OrderBy(x => x.ChangedAt).ToList());
+
+                var approvalTurnaroundSamples =
+                    historyByInvoice
+                        .SelectMany(pair =>
+                        {
+                            if (!invoiceById.TryGetValue(pair.Key, out var invoice))
+                            {
+                                return Enumerable.Empty<(DateTimeOffset ApprovedAt, double Days)>();
+                            }
+
+                            var approval =
+                                pair.Value
+                                    .Where(h =>
+                                    {
+                                        var newStatus =
+                                            (h.NewStatus ?? string.Empty)
+                                                .Trim()
+                                                .ToUpperInvariant();
+
+                                        return newStatus is "APPROVED" or "ACCEPTED";
+                                    })
+                                    .OrderBy(h => h.ChangedAt)
+                                    .FirstOrDefault();
+
+                            if (approval is null || approval.ChangedAt < twelveMonthStart)
+                            {
+                                return Enumerable.Empty<(DateTimeOffset ApprovedAt, double Days)>();
+                            }
+
+                            var submissionEvent =
+                                pair.Value
+                                    .Where(h =>
+                                        h.ChangedAt <= approval.ChangedAt &&
+                                        (
+                                            string.Equals(
+                                                h.NewStatus,
+                                                "SUBMITTED",
+                                                StringComparison.OrdinalIgnoreCase) ||
+                                            string.Equals(
+                                                h.NewStatus,
+                                                "RESUBMITTED",
+                                                StringComparison.OrdinalIgnoreCase)
+                                        ))
+                                    .OrderByDescending(h => h.ChangedAt)
+                                    .FirstOrDefault();
+
+                            var submittedAt =
+                                submissionEvent?.ChangedAt
+                                ?? invoice.SubmissionDate
+                                ?? invoice.CreatedAt;
+
+                            if (submittedAt > approval.ChangedAt)
+                            {
+                                submittedAt = invoice.CreatedAt;
+                            }
+
+                            var days =
+                                Math.Max(
+                                    0d,
+                                    (approval.ChangedAt - submittedAt).TotalDays);
+
+                            return new[]
+                            {
+                                (ApprovedAt: approval.ChangedAt, Days: days)
+                            };
+                        })
+                        .ToList();
+
+                var approvalTurnaroundTrend =
+                    Enumerable.Range(0, 12)
+                        .Select(offset => twelveMonthStart.AddMonths(offset))
+                        .Select(month =>
+                        {
+                            var samples =
+                                approvalTurnaroundSamples
+                                    .Where(x =>
+                                        x.ApprovedAt.Year == month.Year &&
+                                        x.ApprovedAt.Month == month.Month)
+                                    .Select(x => x.Days)
+                                    .ToList();
+
+                            return new
+                            {
+                                month = month.ToString("MMM"),
+                                averageDays =
+                                    samples.Count == 0
+                                        ? (double?)null
+                                        : Math.Round(samples.Average(), 1),
+                                approvedCount = samples.Count
+                            };
                         })
                         .ToList();
 
@@ -1065,6 +1183,8 @@ public static class DashboardEndpoints
 
                                     trend =
                                         invoiceTrend,
+
+                                    approvalTurnaroundTrend,
 
                                     topVendors =
                                         topInvoiceVendors,

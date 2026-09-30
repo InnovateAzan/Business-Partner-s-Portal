@@ -50,6 +50,35 @@ function createIdempotencyKey() {
 }
 
 // ============================================================
+// TODAY DATE FOR INVOICE DATE MAX
+// ============================================================
+
+function getTodayDateString() {
+  const today = new Date();
+
+  const year =
+    today.getFullYear();
+
+  const month =
+    String(
+      today.getMonth() + 1
+    ).padStart(
+      2,
+      "0"
+    );
+
+  const day =
+    String(
+      today.getDate()
+    ).padStart(
+      2,
+      "0"
+    );
+
+  return `${year}-${month}-${day}`;
+}
+
+// ============================================================
 // UPLOAD ICON
 // ============================================================
 
@@ -443,6 +472,13 @@ export function SubmitInvoicePage() {
 
   const isResubmit =
     Boolean(id);
+
+  const todayDate =
+    useMemo(
+      () =>
+        getTodayDateString(),
+      []
+    );
 
   const [
     rows,
@@ -1570,6 +1606,8 @@ export function SubmitInvoicePage() {
   // Keep these referenced to avoid noUnusedLocals errors
   void availableGrns;
   void toggleGrn;
+  void resubmitStatus;
+  void lastSuccessfulStep;
 
   function removeExistingDocument(
     document: ExistingDocument
@@ -1658,6 +1696,18 @@ export function SubmitInvoicePage() {
     ) {
       setError(
         "Invoice Date is required."
+      );
+
+      return;
+    }
+
+    if (
+      invoiceDate &&
+      invoiceDate >
+        todayDate
+    ) {
+      setError(
+        "Future invoice dates are not allowed."
       );
 
       return;
@@ -2124,6 +2174,9 @@ export function SubmitInvoicePage() {
             value={
               invoiceDate
             }
+            max={
+              todayDate
+            }
             onClick={(
               event
             ) => {
@@ -2139,12 +2192,29 @@ export function SubmitInvoicePage() {
             }}
             onChange={(
               event
-            ) =>
-              setInvoiceDate(
+            ) => {
+              const selectedDate =
                 event.target
-                  .value
-              )
-            }
+                  .value;
+
+              if (
+                selectedDate &&
+                selectedDate >
+                  todayDate
+              ) {
+                setError(
+                  "Future invoice dates are not allowed."
+                );
+
+                return;
+              }
+
+              setError("");
+
+              setInvoiceDate(
+                selectedDate
+              );
+            }}
           />
         </label>
 

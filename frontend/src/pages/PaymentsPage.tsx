@@ -8,6 +8,7 @@ import {
   downloadInvoiceDocument,
   getInvoiceDocuments,
   getMyOracleInvoices,
+  getMyPoGrns,
   getMyPortalInvoices,
   viewInvoiceDocument,
 } from "../api/portal";
@@ -18,6 +19,7 @@ import {
 
 import type {
   OracleInvoice,
+  OraclePoGrn,
   PortalInvoice,
 } from "../types";
 
@@ -29,20 +31,9 @@ import {
   exportRowsToCsv,
 } from "../utils/exportCsv";
 
-// ============================================================
-// PAYMENT / INVOICE DEDUPLICATION
-// ============================================================
-
 function invoiceKey(
   row: OracleInvoice
 ) {
-  /*
-   * Oracle INVOICE_ID is the real invoice-header identifier and is
-   * therefore the safest key for the Payments page.
-   *
-   * The fallback protects the UI if a legacy/custom Oracle view
-   * unexpectedly omits INVOICE_ID.
-   */
   if (
     row.oracleInvoiceId &&
     row.oracleInvoiceId.trim()
@@ -88,11 +79,6 @@ function uniqueInvoices(
       continue;
     }
 
-    /*
-     * Backend already returns one row per invoice. This is a defensive
-     * frontend guard so a future Oracle-view change cannot duplicate the
-     * same invoice on screen or in CSV export.
-     */
     const currentHasStatus =
       Boolean(
         current.paymentStatus
@@ -119,10 +105,6 @@ function uniqueInvoices(
   ];
 }
 
-// ============================================================
-// DISPLAY HELPERS
-// ============================================================
-
 function formatDate(
   value?: string | null
 ) {
@@ -130,10 +112,6 @@ function formatDate(
     return "-";
   }
 
-  /*
-   * Use the date portion directly when Oracle returns an ISO-style
-   * date/time so the browser timezone cannot shift the displayed date.
-   */
   const datePart =
     value.substring(0, 10);
 
@@ -317,13 +295,12 @@ function findPortalInvoice(
   return sameNumber[0];
 }
 
-// ============================================================
-// PAGE
-// ============================================================
-
 export function PaymentsPage() {
   const [rows, setRows] =
     useState<OracleInvoice[]>([]);
+
+  const [poGrnRows, setPoGrnRows] =
+    useState<OraclePoGrn[]>([]);
 
   const [portalInvoices, setPortalInvoices] =
     useState<PortalInvoice[]>([]);
@@ -370,11 +347,13 @@ export function PaymentsPage() {
           oracleRows,
           portalRows,
           invoiceDocuments,
+          oraclePoGrnRows,
         ] =
           await Promise.all([
             getMyOracleInvoices(),
             getMyPortalInvoices(),
             getInvoiceDocuments(),
+            getMyPoGrns(),
           ]);
 
         if (!active) {
@@ -393,6 +372,10 @@ export function PaymentsPage() {
 
         setDocuments(
           invoiceDocuments
+        );
+
+        setPoGrnRows(
+          oraclePoGrnRows
         );
       } catch (err: any) {
         if (!active) {
@@ -624,6 +607,77 @@ export function PaymentsPage() {
     }
   }
 
+  const detailPoNumbers =
+    detailPortalInvoice?.poNumbers?.length
+      ? detailPortalInvoice.poNumbers
+      : detailPortalInvoice?.poNumber
+        ? [detailPortalInvoice.poNumber]
+        : detailPayment?.poNumber
+          ? [detailPayment.poNumber]
+          : [];
+
+  const detailGrnNumbers =
+    detailPortalInvoice?.grnNumbers?.length
+      ? detailPortalInvoice.grnNumbers
+      : detailPayment?.grnNumber
+        ? [detailPayment.grnNumber]
+        : [];
+
+  const relatedPoGrnRows =
+    detailPayment
+      ? poGrnRows.filter(
+          (row) => {
+            const poMatches =
+              detailPoNumbers.length === 0
+              || detailPoNumbers.some(
+                (po) =>
+                  normalize(po) ===
+                  normalize(row.poNumber)
+              );
+
+            const grnMatches =
+              detailGrnNumbers.length === 0
+              || detailGrnNumbers.some(
+                (grn) =>
+                  normalize(grn) ===
+                  normalize(row.grnNumber)
+              );
+
+            return poMatches && grnMatches;
+          }
+        )
+      : [];
+
+  const detailPrNumbers =
+    [
+      ...new Set(
+        relatedPoGrnRows
+          .map(
+            (row) =>
+              row.prNumber?.trim()
+          )
+          .filter(
+            (value): value is string =>
+              Boolean(value)
+          )
+      ),
+    ];
+
+  const detailGrnDates =
+    [
+      ...new Set(
+        relatedPoGrnRows
+          .map(
+            (row) =>
+              row.receiptDate
+          )
+          .filter(
+            (value): value is string =>
+              Boolean(value)
+          )
+      ),
+    ];
+
   return (
     <div className="page-card">
       <div className="page-card-head vendor-table-head">
@@ -633,31 +687,19 @@ export function PaymentsPage() {
           </h2>
 
           <p>
-            Read-only payment status
-            synchronized from Oracle
-            EBS.
+            Read-only payment status synchronized from Oracle EBS.
           </p>
         </div>
 
         <DataTableToolbar
           searchValue={search}
-          onSearchChange={
-            setSearch
-          }
+          onSearchChange={setSearch}
           searchPlaceholder="Search Payments..."
-          statusValue={
-            statusFilter
-          }
-          onStatusChange={
-            setStatusFilter
-          }
+          statusValue={statusFilter}
+          onStatusChange={setStatusFilter}
           statusLabel="Payment Status"
-          statusOptions={
-            statusOptions
-          }
-          onExport={
-            exportPayments
-          }
+          statusOptions={statusOptions}
+          onExport={exportPayments}
         />
       </div>
 
@@ -670,37 +712,20 @@ export function PaymentsPage() {
       <table className="data-table vendor-data-table payment-table">
         <thead>
           <tr>
-            <th>
-              Invoice #
-            </th>
-
-            <th>
-              PO Number
-            </th>
-
-            <th>
-              GRN Number
-            </th>
-
+            <th>Invoice #</th>
+            <th>PO Number</th>
+            <th>GRN Number</th>
             <th className="payment-column">
               Invoice Amount
             </th>
-
             <th className="payment-column">
               Amount Paid
             </th>
-
             <th className="payment-column">
               Outstanding
             </th>
-
-            <th>
-              Payment Status
-            </th>
-
-            <th>
-              Approval Status
-            </th>
+            <th>Payment Status</th>
+            <th>Approval Status</th>
           </tr>
         </thead>
 
@@ -708,23 +733,15 @@ export function PaymentsPage() {
           {filteredRows.map(
             (row) => (
               <tr
-                key={
-                  invoiceKey(
-                    row
-                  )
-                }
+                key={invoiceKey(row)}
                 className="invoice-history-row"
                 onDoubleClick={() =>
-                  openPaymentDetails(
-                    row
-                  )
+                  openPaymentDetails(row)
                 }
                 title="Double-click to view payment and invoice submission details"
               >
                 <td>
-                  {
-                    row.invoiceNumber
-                  }
+                  {row.invoiceNumber}
                 </td>
 
                 <td>
@@ -737,22 +754,19 @@ export function PaymentsPage() {
 
                 <td className="payment-column">
                   {Number(
-                    row.invoiceAmount ||
-                      0
+                    row.invoiceAmount || 0
                   ).toLocaleString()}
                 </td>
 
                 <td className="payment-column">
                   {Number(
-                    row.amountPaid ||
-                      0
+                    row.amountPaid || 0
                   ).toLocaleString()}
                 </td>
 
                 <td className="payment-column">
                   {Number(
-                    row.outstandingAmount ||
-                      0
+                    row.outstandingAmount || 0
                   ).toLocaleString()}
                 </td>
 
@@ -763,18 +777,14 @@ export function PaymentsPage() {
                         "Pending"
                     )}`}
                   >
-                    {
-                      row.paymentStatus ||
-                      "Pending"
-                    }
+                    {row.paymentStatus ||
+                      "Pending"}
                   </span>
                 </td>
 
                 <td>
-                  {
-                    row.approvalStatus ||
-                    "-"
-                  }
+                  {row.approvalStatus ||
+                    "-"}
                 </td>
               </tr>
             )
@@ -787,8 +797,7 @@ export function PaymentsPage() {
                   colSpan={8}
                   className="empty"
                 >
-                  No payments match
-                  the selected filters.
+                  No payments match the selected filters.
                 </td>
               </tr>
             )}
@@ -832,16 +841,14 @@ export function PaymentsPage() {
                 </h3>
 
                 <p>
-                  Oracle payment status with the vendor's original portal submission.
+                  Oracle payment status with the vendor&apos;s original portal submission.
                 </p>
               </div>
 
               <button
                 type="button"
                 className="invoice-detail-close"
-                onClick={
-                  closePaymentDetails
-                }
+                onClick={closePaymentDetails}
                 aria-label="Close"
               >
                 ×
@@ -850,20 +857,14 @@ export function PaymentsPage() {
 
             <div className="invoice-detail-grid">
               <div>
-                <span>
-                  Invoice #
-                </span>
-
+                <span>Invoice #</span>
                 <strong>
                   {detailPayment.invoiceNumber}
                 </strong>
               </div>
 
               <div>
-                <span>
-                  Invoice Date
-                </span>
-
+                <span>Invoice Date</span>
                 <strong>
                   {formatDate(
                     detailPayment.invoiceDate
@@ -872,10 +873,7 @@ export function PaymentsPage() {
               </div>
 
               <div>
-                <span>
-                  Invoice Type
-                </span>
-
+                <span>Invoice Type</span>
                 <strong>
                   {detailPortalInvoice?.invoiceType ||
                     "-"}
@@ -883,12 +881,10 @@ export function PaymentsPage() {
               </div>
 
               <div>
-                <span>
-                  Invoice Amount
-                </span>
-
+                <span>Invoice Amount</span>
                 <strong>
-                  PKR {Number(
+                  PKR{" "}
+                  {Number(
                     detailPayment.invoiceAmount ||
                       0
                   ).toLocaleString()}
@@ -896,12 +892,10 @@ export function PaymentsPage() {
               </div>
 
               <div>
-                <span>
-                  Amount Paid
-                </span>
-
+                <span>Amount Paid</span>
                 <strong>
-                  PKR {Number(
+                  PKR{" "}
+                  {Number(
                     detailPayment.amountPaid ||
                       0
                   ).toLocaleString()}
@@ -909,12 +903,10 @@ export function PaymentsPage() {
               </div>
 
               <div>
-                <span>
-                  Outstanding
-                </span>
-
+                <span>Outstanding</span>
                 <strong>
-                  PKR {Number(
+                  PKR{" "}
+                  {Number(
                     detailPayment.outstandingAmount ||
                       0
                   ).toLocaleString()}
@@ -922,10 +914,7 @@ export function PaymentsPage() {
               </div>
 
               <div>
-                <span>
-                  Payment Status
-                </span>
-
+                <span>Payment Status</span>
                 <strong>
                   {detailPayment.paymentStatus ||
                     "Pending"}
@@ -933,10 +922,7 @@ export function PaymentsPage() {
               </div>
 
               <div>
-                <span>
-                  Approval Status
-                </span>
-
+                <span>Approval Status</span>
                 <strong>
                   {detailPayment.approvalStatus ||
                     "-"}
@@ -958,9 +944,7 @@ export function PaymentsPage() {
               </div>
 
               <div className="invoice-detail-wide">
-                <span>
-                  GRN(s)
-                </span>
+                <span>GRN(s)</span>
 
                 <strong>
                   {detailPortalInvoice?.grnNumbers?.length
@@ -970,10 +954,41 @@ export function PaymentsPage() {
                 </strong>
               </div>
 
-              <div className="invoice-detail-full">
+              {/* NEW */}
+              <div className="invoice-detail-wide">
                 <span>
-                  Description
+                  PR Number(s)
                 </span>
+
+                <strong>
+                  {detailPrNumbers.length
+                    ? detailPrNumbers.join(", ")
+                    : "-"}
+                </strong>
+              </div>
+
+              {/* NEW */}
+              <div className="invoice-detail-wide">
+                <span>
+                  GRN Date(s)
+                </span>
+
+                <strong>
+                  {detailGrnDates.length
+                    ? detailGrnDates
+                        .map(
+                          (value) =>
+                            formatDate(value)
+                        )
+                        .join(", ")
+                    : formatDate(
+                        detailPayment.receiptDate
+                      )}
+                </strong>
+              </div>
+
+              <div className="invoice-detail-full">
+                <span>Description</span>
 
                 <strong>
                   {detailPortalInvoice?.description ||

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { requestPasswordReset, resetPassword, resendLoginOtp, verifyLoginOtp } from "../api/auth";
-import { getApiErrorMessage } from "../api/client";
+import { api, getApiErrorMessage } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 
 export function ForgotPasswordPage() {
@@ -11,9 +11,364 @@ export function ForgotPasswordPage() {
 }
 
 export function ResetPasswordPage() {
-  const [params] = useSearchParams(); const nav = useNavigate(); const [password, setPassword] = useState(""); const [confirm, setConfirm] = useState(""); const [error, setError] = useState(""); const [done, setDone] = useState(false);
-  async function submit(e: React.FormEvent) { e.preventDefault(); setError(""); try { await resetPassword(params.get("token") || "", password, confirm); setDone(true); setTimeout(() => nav("/login"), 1200); } catch (e) { setError(getApiErrorMessage(e)); } }
-  return <main className="auth-page"><section className="signup-card"><div className="auth-brand-logo"><img src="/pakistan-cables-logo.png" alt="Pakistan Cables" /></div><h1>Reset Password</h1>{done ? <p className="success-note">Password reset. Redirecting to sign in…</p> : <form className="signup-form" onSubmit={submit}><label>New Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="new-password" /></label><label>Confirm Password<input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} required autoComplete="new-password" /></label>{error && <div className="form-error">{error}</div>}<button className="primary-btn">Reset Password</button></form>}</section></main>;
+  const [params] = useSearchParams();
+  const nav = useNavigate();
+
+  const token = params.get("token") || "";
+
+  const [resetInfo, setResetInfo] = useState<{
+    email: string;
+    fullName: string;
+    expiresAt: string;
+  } | null>(null);
+
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState(false);
+
+  const passwordRules = {
+    length: password.length >= 8,
+    uppercase: /[A-Z]/.test(password),
+    lowercase: /[a-z]/.test(password),
+    number: /\d/.test(password),
+  };
+
+  const passwordValid =
+    passwordRules.length &&
+    passwordRules.uppercase &&
+    passwordRules.lowercase &&
+    passwordRules.number;
+
+  const passwordsMatch =
+    password.length > 0 &&
+    password === confirm;
+
+  useEffect(() => {
+    async function loadResetInfo() {
+      if (!token) {
+        setError("Password reset link is invalid.");
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const response = await api.get<{
+          email: string;
+          fullName: string;
+          expiresAt: string;
+        }>("/auth/password-reset-info", {
+          params: { token },
+        });
+
+        setResetInfo(response.data);
+      } catch (requestError) {
+        setError(getApiErrorMessage(requestError));
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadResetInfo();
+  }, [token]);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+
+    if (!passwordValid) {
+      setError("Please meet all password requirements.");
+      return;
+    }
+
+    if (!passwordsMatch) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    setSubmitting(true);
+
+    try {
+      await resetPassword(token, password, confirm);
+      setDone(true);
+      setPassword("");
+      setConfirm("");
+    } catch (requestError) {
+      setError(getApiErrorMessage(requestError));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <main className="set-password-page">
+        <section className="set-password-card">
+          <div className="set-password-loading">
+            Validating password reset link...
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (error && !resetInfo) {
+    return (
+      <main className="set-password-page">
+        <section className="set-password-card set-password-invalid">
+          <div className="set-password-invalid-icon">!</div>
+
+          <h1>Invalid Password Reset Link</h1>
+
+          <p>{error}</p>
+
+          <button
+            type="button"
+            className="set-password-primary-btn"
+            onClick={() =>
+              nav("/forgot-password", {
+                replace: true,
+              })
+            }
+          >
+            Request New Reset Link
+          </button>
+        </section>
+      </main>
+    );
+  }
+
+  if (done) {
+    return (
+      <main className="set-password-page">
+        <section className="set-password-card set-password-success">
+          <div className="set-password-success-icon">✓</div>
+
+          <h1>Password Reset</h1>
+
+          <p>
+            Your password has been reset successfully. You can now sign in to
+            the Business Partner&apos;s Portal using your registered email
+            address.
+          </p>
+
+          <button
+            type="button"
+            className="set-password-primary-btn"
+            onClick={() =>
+              nav("/login", {
+                replace: true,
+              })
+            }
+          >
+            Continue to Login
+          </button>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="set-password-page">
+      <section className="set-password-card">
+        <div className="set-password-heading">
+          <h1>Reset Your Password</h1>
+
+          <p>
+            Create a new secure password for your Business Partner&apos;s Portal
+            account.
+          </p>
+        </div>
+
+        <form className="set-password-form" onSubmit={submit}>
+          <label className="set-password-field">
+            <span>Email Address</span>
+
+            <div className="set-password-input readonly">
+              <span className="set-password-input-icon">✉</span>
+
+              <input
+                type="email"
+                value={resetInfo?.email ?? ""}
+                readOnly
+                autoComplete="email"
+              />
+            </div>
+          </label>
+
+          <label className="set-password-field">
+            <span>New Password</span>
+
+            <div className="set-password-input">
+              <input
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete="new-password"
+                placeholder="Enter new password"
+                required
+              />
+
+              <button
+                type="button"
+                className="set-password-eye-btn"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                title={showPassword ? "Hide password" : "Show password"}
+                onClick={() => setShowPassword((current) => !current)}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="20"
+                  height="20"
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  <path
+                    d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="2.75"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                  />
+                  {!showPassword && (
+                    <path
+                      d="M4 4 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.7"
+                      strokeLinecap="round"
+                    />
+                  )}
+                </svg>
+              </button>
+            </div>
+          </label>
+
+          <div className="set-password-rules">
+            <div className={passwordRules.length ? "valid" : ""}>
+              <span>{passwordRules.length ? "✓" : "○"}</span>
+              Minimum 8 characters
+            </div>
+
+            <div className={passwordRules.uppercase ? "valid" : ""}>
+              <span>{passwordRules.uppercase ? "✓" : "○"}</span>
+              At least one uppercase letter
+            </div>
+
+            <div className={passwordRules.lowercase ? "valid" : ""}>
+              <span>{passwordRules.lowercase ? "✓" : "○"}</span>
+              At least one lowercase letter
+            </div>
+
+            <div className={passwordRules.number ? "valid" : ""}>
+              <span>{passwordRules.number ? "✓" : "○"}</span>
+              At least one number
+            </div>
+          </div>
+
+          <label className="set-password-field">
+            <span>Confirm Password</span>
+
+            <div className="set-password-input">
+              <input
+                type={showConfirmPassword ? "text" : "password"}
+                value={confirm}
+                onChange={(event) => setConfirm(event.target.value)}
+                autoComplete="new-password"
+                placeholder="Confirm new password"
+                required
+              />
+
+              <button
+                type="button"
+                className="set-password-eye-btn"
+                aria-label={
+                  showConfirmPassword ? "Hide password" : "Show password"
+                }
+                title={
+                  showConfirmPassword ? "Hide password" : "Show password"
+                }
+                onClick={() =>
+                  setShowConfirmPassword((current) => !current)
+                }
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="20"
+                  height="20"
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  <path
+                    d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="2.75"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                  />
+                  {!showConfirmPassword && (
+                    <path
+                      d="M4 4 20 20"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.7"
+                      strokeLinecap="round"
+                    />
+                  )}
+                </svg>
+              </button>
+            </div>
+          </label>
+
+          {confirm.length > 0 && (
+            <div
+              className={`set-password-match ${
+                passwordsMatch ? "valid" : "invalid"
+              }`}
+            >
+              {passwordsMatch ? "✓ Passwords match" : "Passwords do not match"}
+            </div>
+          )}
+
+          {error && <div className="form-error">{error}</div>}
+
+          <button
+            type="submit"
+            className="set-password-primary-btn"
+            disabled={
+              submitting ||
+              !passwordValid ||
+              !passwordsMatch
+            }
+          >
+            {submitting ? "Resetting..." : "Reset Password"}
+          </button>
+        </form>
+      </section>
+    </main>
+  );
 }
 
 export function VerifyDevicePage() {

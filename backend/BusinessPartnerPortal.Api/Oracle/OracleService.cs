@@ -77,9 +77,14 @@ public sealed class OracleService(
         ).Value = vendorId;
 
         var rows =
-            await Read(command, ct);
+            await Read(
+                command,
+                ct
+            );
 
-        if (rows.Count == 0)
+        if (
+            rows.Count == 0
+        )
         {
             return null;
         }
@@ -121,12 +126,18 @@ public sealed class OracleService(
         command.Parameters.Add(
             "supplierNumber",
             OracleDbType.Varchar2
-        ).Value = supplierNumber.Trim();
+        ).Value =
+            supplierNumber.Trim();
 
         var rows =
-            await Read(command, ct);
+            await Read(
+                command,
+                ct
+            );
 
-        if (rows.Count == 0)
+        if (
+            rows.Count == 0
+        )
         {
             return null;
         }
@@ -158,10 +169,15 @@ public sealed class OracleService(
             """;
 
         var rows =
-            await Read(command, ct);
+            await Read(
+                command,
+                ct
+            );
 
         return rows
-            .Select(MapSupplier)
+            .Select(
+                MapSupplier
+            )
             .ToList();
     }
 
@@ -188,7 +204,9 @@ public sealed class OracleService(
         try
         {
             var result =
-                await command.ExecuteScalarAsync(ct);
+                await command.ExecuteScalarAsync(
+                    ct
+                );
 
             if (
                 result is null ||
@@ -202,7 +220,9 @@ public sealed class OracleService(
                 result
             );
         }
-        catch (OracleException ex)
+        catch (
+            OracleException ex
+        )
         {
             logger.LogError(
                 ex,
@@ -229,7 +249,9 @@ public sealed class OracleService(
             )
         )
         {
-            return await GetSuppliersAsync(ct);
+            return await GetSuppliersAsync(
+                ct
+            );
         }
 
         await using var connection =
@@ -303,13 +325,19 @@ public sealed class OracleService(
         command.Parameters.Add(
             "pattern",
             OracleDbType.Varchar2
-        ).Value = pattern;
+        ).Value =
+            pattern;
 
         var rows =
-            await Read(command, ct);
+            await Read(
+                command,
+                ct
+            );
 
         return rows
-            .Select(MapSupplier)
+            .Select(
+                MapSupplier
+            )
             .ToList();
     }
 
@@ -368,12 +396,14 @@ public sealed class OracleService(
         command.Parameters.Add(
             "vendorId",
             OracleDbType.Decimal
-        ).Value = vendorId;
+        ).Value =
+            vendorId;
 
         command.Parameters.Add(
             "fiscalWindowStart",
             OracleDbType.Date
-        ).Value = PakistanFiscalWindow.Start();
+        ).Value =
+            PakistanFiscalWindow.Start();
 
         if (
             !string.IsNullOrWhiteSpace(
@@ -389,11 +419,16 @@ public sealed class OracleService(
         }
 
         var rows =
-            await Read(command, ct);
+            await Read(
+                command,
+                ct
+            );
 
         var mappedRows =
             rows
-                .Select(MapPoGrn)
+                .Select(
+                    MapPoGrn
+                )
                 .ToList();
 
         /*
@@ -431,6 +466,7 @@ public sealed class OracleService(
          * RCV_TRANSACTION_ID is still preserved in the selected
          * DTO row for Oracle AP invoice integration.
          */
+
         return mappedRows
             .GroupBy(
                 GetPoGrnBusinessLineKey,
@@ -443,10 +479,12 @@ public sealed class OracleService(
                     )
             )
             .OrderByDescending(
-                x => x.PoNumber
+                x =>
+                    x.PoNumber
             )
             .ThenByDescending(
-                x => x.ReceiptDate
+                x =>
+                    x.ReceiptDate
             )
             .ToList();
     }
@@ -467,6 +505,7 @@ public sealed class OracleService(
          *
          * This keeps one canonical row for the portal.
          */
+
         return rows
             .OrderByDescending(
                 x =>
@@ -476,11 +515,14 @@ public sealed class OracleService(
             .ThenByDescending(
                 x =>
                     x.GrnReceivedQuantity
-                    ?? x.ReceivedQuantity
-                    ?? 0
+                    ??
+                    x.ReceivedQuantity
+                    ??
+                    0
             )
             .ThenByDescending(
-                x => x.ReceiptDate
+                x =>
+                    x.ReceiptDate
             )
             .ThenByDescending(
                 x =>
@@ -542,6 +584,7 @@ public sealed class OracleService(
          * One GRN can legitimately have multiple lines, therefore
          * GRN number alone must never be used for deduplication.
          */
+
         if (
             !string.IsNullOrWhiteSpace(
                 shipmentLineId
@@ -568,6 +611,7 @@ public sealed class OracleService(
          * This prevents identical Oracle transaction rows for the
          * same business line from being counted multiple times.
          */
+
         if (
             !string.IsNullOrWhiteSpace(
                 poLineId
@@ -583,7 +627,9 @@ public sealed class OracleService(
                 "PO_LINE_ID",
                 poLineId,
                 "ITEM",
-                !string.IsNullOrWhiteSpace(itemId)
+                !string.IsNullOrWhiteSpace(
+                    itemId
+                )
                     ? itemId
                     : itemCode
             );
@@ -595,6 +641,7 @@ public sealed class OracleService(
          * Some Oracle views may not expose PO_LINE_ID but may expose
          * the human-readable PO line number.
          */
+
         if (
             !string.IsNullOrWhiteSpace(
                 poLineNum
@@ -610,7 +657,9 @@ public sealed class OracleService(
                 "PO_LINE_NUM",
                 poLineNum,
                 "ITEM",
-                !string.IsNullOrWhiteSpace(itemId)
+                !string.IsNullOrWhiteSpace(
+                    itemId
+                )
                     ? itemId
                     : itemCode
             );
@@ -625,6 +674,7 @@ public sealed class OracleService(
          * Keep quantity, price and date in the key to avoid merging
          * genuinely different GRN receipt lines.
          */
+
         return string.Join(
             "|",
             "PO",
@@ -632,13 +682,16 @@ public sealed class OracleService(
             "GRN",
             grnNumber,
             "ITEM",
-            !string.IsNullOrWhiteSpace(itemId)
+            !string.IsNullOrWhiteSpace(
+                itemId
+            )
                 ? itemId
                 : itemCode,
             "QTY",
             DecimalKey(
                 row.GrnReceivedQuantity
-                ?? row.ReceivedQuantity
+                ??
+                row.ReceivedQuantity
             ),
             "PRICE",
             DecimalKey(
@@ -678,7 +731,9 @@ public sealed class OracleService(
             value
             ?? 0
         ).ToString(
-            System.Globalization.CultureInfo.InvariantCulture
+            System.Globalization
+                .CultureInfo
+                .InvariantCulture
         );
     }
 
@@ -692,7 +747,9 @@ public sealed class OracleService(
         return value.HasValue
             ? value.Value.ToString(
                 "yyyyMMddHHmmss",
-                System.Globalization.CultureInfo.InvariantCulture
+                System.Globalization
+                    .CultureInfo
+                    .InvariantCulture
             )
             : "";
     }
@@ -707,8 +764,12 @@ public sealed class OracleService(
         if (
             decimal.TryParse(
                 value,
-                System.Globalization.NumberStyles.Any,
-                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization
+                    .NumberStyles
+                    .Any,
+                System.Globalization
+                    .CultureInfo
+                    .InvariantCulture,
                 out var parsed
             )
         )
@@ -768,27 +829,47 @@ public sealed class OracleService(
                 v.PAYMENT_STATUS,
 
                 CASE
-                    WHEN UPPER(TRIM(aia.ATTRIBUTE_CATEGORY)) = 'BUSINESS PARTNER PORTAL'
-                    THEN TRIM(aia.ATTRIBUTE11)
+                    WHEN UPPER(
+                        TRIM(
+                            aia.ATTRIBUTE_CATEGORY
+                        )
+                    ) = 'BUSINESS PARTNER PORTAL'
+                    THEN TRIM(
+                        aia.ATTRIBUTE11
+                    )
                     ELSE NULL
                 END AS APPROVAL_STATUS,
 
                 CASE
-                    WHEN UPPER(TRIM(aia.ATTRIBUTE_CATEGORY)) = 'BUSINESS PARTNER PORTAL'
-                    THEN TRIM(aia.ATTRIBUTE13)
+                    WHEN UPPER(
+                        TRIM(
+                            aia.ATTRIBUTE_CATEGORY
+                        )
+                    ) = 'BUSINESS PARTNER PORTAL'
+                    THEN TRIM(
+                        aia.ATTRIBUTE13
+                    )
                     ELSE NULL
                 END AS REMARKS,
 
-                TO_CHAR(v.PO_NUMBER) AS PO_NUMBER,
-                TO_CHAR(v.GRN_NUMBER) AS GRN_NUMBER,
+                TO_CHAR(
+                    v.PO_NUMBER
+                ) AS PO_NUMBER,
+
+                TO_CHAR(
+                    v.GRN_NUMBER
+                ) AS GRN_NUMBER,
+
                 v.RECEIPT_DATE
 
             FROM APPS.PORTAL_INVOICES_V v
 
             LEFT JOIN AP_INVOICES_ALL aia
-                ON aia.INVOICE_ID = v.INVOICE_ID
+                ON aia.INVOICE_ID =
+                   v.INVOICE_ID
 
-            WHERE v.VENDOR_ID = :vendorId
+            WHERE v.VENDOR_ID =
+                  :vendorId
 
             ORDER BY
                 v.INVOICE_DATE DESC NULLS LAST
@@ -797,14 +878,21 @@ public sealed class OracleService(
         command.Parameters.Add(
             "vendorId",
             OracleDbType.Decimal
-        ).Value = vendorId;
+        ).Value =
+            vendorId;
 
         var rows =
-            await Read(command, ct);
+            await Read(
+                command,
+                ct
+            );
 
-        var mappedInvoices = rows
-            .Select(MapInvoice)
-            .ToList();
+        var mappedInvoices =
+            rows
+                .Select(
+                    MapInvoice
+                )
+                .ToList();
 
         /*
          * APPS.PORTAL_INVOICES_V can return the same AP invoice more
@@ -818,14 +906,23 @@ public sealed class OracleService(
          * A conservative fallback is retained for any legacy/custom view
          * row where INVOICE_ID is unexpectedly unavailable.
          */
+
         return mappedInvoices
             .GroupBy(
                 GetOracleInvoiceBusinessKey,
                 StringComparer.OrdinalIgnoreCase
             )
-            .Select(SelectBestOracleInvoiceRow)
-            .OrderByDescending(x => x.InvoiceDate)
-            .ThenByDescending(x => x.OracleInvoiceId)
+            .Select(
+                SelectBestOracleInvoiceRow
+            )
+            .OrderByDescending(
+                x =>
+                    x.InvoiceDate
+            )
+            .ThenByDescending(
+                x =>
+                    x.OracleInvoiceId
+            )
             .ToList();
     }
 
@@ -836,18 +933,31 @@ public sealed class OracleService(
     private static string GetOracleInvoiceBusinessKey(
         OracleInvoiceDto invoice)
     {
-        if (!string.IsNullOrWhiteSpace(invoice.OracleInvoiceId))
+        if (
+            !string.IsNullOrWhiteSpace(
+                invoice.OracleInvoiceId
+            )
+        )
         {
-            return $"INVOICE_ID|{invoice.OracleInvoiceId.Trim()}";
+            return
+                $"INVOICE_ID|{invoice.OracleInvoiceId.Trim()}";
         }
 
         return string.Join(
             "|",
             "FALLBACK",
-            invoice.VendorId?.Trim() ?? string.Empty,
-            invoice.InvoiceNumber?.Trim() ?? string.Empty,
-            invoice.InvoiceDate?.ToString("yyyyMMdd", CultureInfo.InvariantCulture) ?? string.Empty,
-            invoice.InvoiceAmount.ToString(CultureInfo.InvariantCulture)
+            invoice.VendorId?.Trim()
+                ?? string.Empty,
+            invoice.InvoiceNumber?.Trim()
+                ?? string.Empty,
+            invoice.InvoiceDate?.ToString(
+                "yyyyMMdd",
+                CultureInfo.InvariantCulture
+            )
+                ?? string.Empty,
+            invoice.InvoiceAmount.ToString(
+                CultureInfo.InvariantCulture
+            )
         );
     }
 
@@ -855,51 +965,69 @@ public sealed class OracleService(
     // SELECT CANONICAL ORACLE INVOICE ROW
     // ============================================================
 
-   private static OracleInvoiceDto SelectBestOracleInvoiceRow(
-    IEnumerable<OracleInvoiceDto> invoices)
-{
-    /*
-     * APPS.PORTAL_INVOICES_V may return multiple rows for the same
-     * Oracle invoice because of PO / GRN / receipt joins.
-     *
-     * For portal reconciliation the Oracle DFF Approval Status is
-     * authoritative.
-     *
-     * Priority:
-     * 1. Row containing APPROVAL_STATUS
-     * 2. Row containing REMARKS
-     * 3. Row containing PAYMENT_STATUS
-     * 4. Row containing AMOUNT_PAID
-     * 5. Latest receipt row
-     *
-     * This prevents PAYMENT_STATUS = PAID from incorrectly overriding
-     * APPROVAL_STATUS = Pending / Approved / Rejected / Cancelled.
-     */
-    return invoices
-        .OrderByDescending(
-            x => !string.IsNullOrWhiteSpace(x.ApprovalStatus)
-        )
-        .ThenByDescending(
-            x => !string.IsNullOrWhiteSpace(x.Remarks)
-        )
-        .ThenByDescending(
-            x => !string.IsNullOrWhiteSpace(x.PaymentStatus)
-        )
-        .ThenByDescending(
-            x => x.AmountPaid.HasValue
-        )
-        .ThenByDescending(
-            x => x.ReceiptDate
-        )
-        .First();
-}
+    private static OracleInvoiceDto SelectBestOracleInvoiceRow(
+        IEnumerable<OracleInvoiceDto> invoices)
+    {
+        /*
+         * APPS.PORTAL_INVOICES_V may return multiple rows for the same
+         * Oracle invoice because of PO / GRN / receipt joins.
+         *
+         * For portal reconciliation the Oracle DFF Approval Status is
+         * authoritative.
+         *
+         * Priority:
+         * 1. Row containing APPROVAL_STATUS
+         * 2. Row containing REMARKS
+         * 3. Row containing PAYMENT_STATUS
+         * 4. Row containing AMOUNT_PAID
+         * 5. Latest receipt row
+         *
+         * This prevents PAYMENT_STATUS = PAID from incorrectly overriding
+         * APPROVAL_STATUS = Pending / Approved / Rejected / Cancelled.
+         */
+
+        return invoices
+            .OrderByDescending(
+                x =>
+                    !string.IsNullOrWhiteSpace(
+                        x.ApprovalStatus
+                    )
+            )
+            .ThenByDescending(
+                x =>
+                    !string.IsNullOrWhiteSpace(
+                        x.Remarks
+                    )
+            )
+            .ThenByDescending(
+                x =>
+                    !string.IsNullOrWhiteSpace(
+                        x.PaymentStatus
+                    )
+            )
+            .ThenByDescending(
+                x =>
+                    x.AmountPaid.HasValue
+            )
+            .ThenByDescending(
+                x =>
+                    x.ReceiptDate
+            )
+            .First();
+    }
 
     // ============================================================
     // GENERIC ORACLE READER
     // ============================================================
 
     private async Task<
-        List<Dictionary<string, object?>>>
+        List<
+            Dictionary<
+                string,
+                object?
+            >
+        >
+    >
         Read(
             OracleCommand command,
             CancellationToken ct)
@@ -908,7 +1036,11 @@ public sealed class OracleService(
         {
             var result =
                 new List<
-                    Dictionary<string, object?>>();
+                    Dictionary<
+                        string,
+                        object?
+                    >
+                >();
 
             await using var reader =
                 await command.ExecuteReaderAsync(
@@ -932,16 +1064,27 @@ public sealed class OracleService(
 
                 for (
                     var i = 0;
-                    i < reader.FieldCount;
+                    i <
+                    reader.FieldCount;
                     i++
                 )
                 {
                     var columnName =
-                        reader.GetName(i);
+                        reader.GetName(
+                            i
+                        );
 
-                    if (reader.IsDBNull(i))
+                    if (
+                        reader.IsDBNull(
+                            i
+                        )
+                    )
                     {
-                        row[columnName] = null;
+                        row[
+                            columnName
+                        ] =
+                            null;
+
                         continue;
                     }
 
@@ -958,33 +1101,54 @@ public sealed class OracleService(
                          * Oracle-native value and keep its text representation.
                          * The S()/N() helpers below can safely consume that text.
                          */
-                        row[columnName] =
-                            reader.GetValue(i);
+
+                        row[
+                            columnName
+                        ] =
+                            reader.GetValue(
+                                i
+                            );
                     }
-                    catch (InvalidCastException)
+                    catch (
+                        InvalidCastException
+                    )
                     {
-                        row[columnName] =
+                        row[
+                            columnName
+                        ] =
                             Convert.ToString(
-                                reader.GetOracleValue(i),
+                                reader.GetOracleValue(
+                                    i
+                                ),
                                 CultureInfo.InvariantCulture
                             );
                     }
-                    catch (OverflowException)
+                    catch (
+                        OverflowException
+                    )
                     {
-                        row[columnName] =
+                        row[
+                            columnName
+                        ] =
                             Convert.ToString(
-                                reader.GetOracleValue(i),
+                                reader.GetOracleValue(
+                                    i
+                                ),
                                 CultureInfo.InvariantCulture
                             );
                     }
                 }
 
-                result.Add(row);
+                result.Add(
+                    row
+                );
             }
 
             return result;
         }
-        catch (OracleException ex)
+        catch (
+            OracleException ex
+        )
         {
             logger.LogError(
                 ex,
@@ -1005,7 +1169,8 @@ public sealed class OracleService(
         params string[] names)
     {
         foreach (
-            var name in names
+            var name
+            in names
         )
         {
             if (
@@ -1045,7 +1210,8 @@ public sealed class OracleService(
         params string[] names)
     {
         foreach (
-            var name in names
+            var name
+            in names
         )
         {
             if (
@@ -1097,7 +1263,8 @@ public sealed class OracleService(
         params string[] names)
     {
         foreach (
-            var name in names
+            var name
+            in names
         )
         {
             if (
@@ -1113,7 +1280,8 @@ public sealed class OracleService(
             }
 
             if (
-                value is DateTime date
+                value
+                is DateTime date
             )
             {
                 return date;
@@ -1298,6 +1466,12 @@ public sealed class OracleService(
                 S(
                     row,
                     "PO_NUMBER"
+                ),
+
+            PrNumber:
+                S(
+                    row,
+                    "PR_NUMBER"
                 ),
 
             PoType:
@@ -1521,7 +1695,9 @@ public sealed class OracleService(
                 N(
                     row,
                     "INVOICE_AMOUNT"
-                ) ?? 0,
+                )
+                ??
+                0,
 
             AmountPaid:
                 N(

@@ -11,7 +11,6 @@ public sealed record OracleSupplierDto(
     string? OrgId,
     string? OperatingUnit,
 
-    // Contact information from PORTAL_SUPPLIERS_V
     string? ContactPerson,
     string? Email,
     string? Phone,
@@ -33,6 +32,10 @@ public sealed record OracleSupplierDto(
 public sealed record OraclePoGrnDto(
     string? PoHeaderId,
     string PoNumber,
+
+    // PR Number from PORTAL_PO_GRN_V
+    string? PrNumber,
+
     string? PoType,
     string? PoStatus,
     string? InspectionStatus,
@@ -64,6 +67,7 @@ public sealed record OraclePoGrnDto(
     string? ItemId,
     decimal? GrnReceivedQuantity,
 
+    // GRN / Receipt Date
     DateTime? ReceiptDate,
 
     string? CurrencyCode,
@@ -97,5 +101,6 @@ public sealed record OracleInvoiceDto(
     string? PoNumber,
     string? GrnNumber,
 
+    // GRN receipt date from Oracle view
     DateTime? ReceiptDate
 );

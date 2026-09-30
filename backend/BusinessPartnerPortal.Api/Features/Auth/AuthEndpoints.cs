@@ -800,6 +800,92 @@ public static class AuthEndpoints
         .AllowAnonymous();
 
         // ========================================================
+        // PASSWORD RESET INFO
+        // ========================================================
+
+        group.MapGet(
+            "/password-reset-info",
+            async (
+                string token,
+                AppDbContext db,
+                CancellationToken ct) =>
+            {
+                if (
+                    string.IsNullOrWhiteSpace(
+                        token
+                    )
+                )
+                {
+                    throw new ApiException(
+                        400,
+                        "Password reset token is required."
+                    );
+                }
+
+                var tokenHash =
+                    Hash(
+                        token
+                    );
+
+                var now =
+                    DateTimeOffset.UtcNow;
+
+                var reset =
+                    await db.PasswordResetTokens
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(
+                            x =>
+                                x.TokenHash ==
+                                tokenHash
+                                &&
+                                x.UsedAt ==
+                                null
+                                &&
+                                x.ExpiresAt >
+                                now,
+                            ct
+                        )
+                    ??
+                    throw new ApiException(
+                        400,
+                        "Password reset link is invalid or expired."
+                    );
+
+                var user =
+                    await db.Users
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(
+                            x =>
+                                x.Id ==
+                                reset.UserId
+                                &&
+                                x.IsActive,
+                            ct
+                        )
+                    ??
+                    throw new ApiException(
+                        400,
+                        "Password reset link is invalid or expired."
+                    );
+
+                return Results.Ok(
+                    new
+                    {
+                        email =
+                            user.Email,
+
+                        fullName =
+                            user.FullName,
+
+                        expiresAt =
+                            reset.ExpiresAt
+                    }
+                );
+            }
+        )
+        .AllowAnonymous();
+
+        // ========================================================
         // FORGOT PASSWORD
         // ========================================================
 
@@ -885,8 +971,8 @@ public static class AuthEndpoints
                                 ),
 
                             ExpiresAt =
-                                now.AddMinutes(
-                                    30
+                                now.AddHours(
+                                    24
                                 ),
 
                             CreatedAt =
@@ -899,15 +985,12 @@ public static class AuthEndpoints
                     );
 
                     var frontendUrl =
-                        config[
-                            "FRONTEND_URL"
-                        ]
-                        ??
-                        "http://localhost:5173";
+                        FrontendUrlResolver.Resolve(config);
 
                     await emailSender
                         .SendPasswordResetAsync(
                             user.Email,
+                            user.FullName,
                             $"{frontendUrl.TrimEnd('/')}/reset-password?token={Uri.EscapeDataString(token)}",
                             ct
                         );
@@ -917,7 +1000,7 @@ public static class AuthEndpoints
                     new
                     {
                         message =
-                            "If an account exists for that email address, a password reset link has been sent."
+                            "If your email address is registered with us, a password reset link will be sent to your registered email address."
                     }
                 );
             }

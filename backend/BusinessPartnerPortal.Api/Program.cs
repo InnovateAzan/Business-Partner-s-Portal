@@ -28,6 +28,7 @@ using Microsoft.IdentityModel.Tokens;
 
 using Serilog;
 
+
 // ============================================================
 // LOAD ENVIRONMENT
 // ============================================================
@@ -38,6 +39,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Configuration
     .AddEnvironmentVariables();
+
 
 // ============================================================
 // LOGGING
@@ -95,6 +97,7 @@ if (!loginOtpEnabled)
     );
 }
 
+
 // ============================================================
 // POSTGRESQL CONFIGURATION
 // ============================================================
@@ -139,6 +142,7 @@ builder.Services
             )
     );
 
+
 // ============================================================
 // COMMON SERVICES
 // ============================================================
@@ -151,6 +155,7 @@ builder.Services
 
 builder.Services
     .AddSingleton<JwtTokenService>();
+
 
 // ============================================================
 // JWT AUTHENTICATION
@@ -211,92 +216,39 @@ builder.Services
 builder.Services
     .AddAuthorization();
 
+
 // ============================================================
 // CORS
 // ============================================================
 //
-// Configure explicit origins in FRONTEND_URLS (semicolon or comma separated).
-// FRONTEND_URL remains the canonical public frontend URL for email links.
-// CORS intentionally does not use a wildcard because browser credentials are
-// enabled by the frontend HTTP client.
+// Allow the frontend served by this machine's current LAN address. CORS
+// intentionally does not use a wildcard because browser credentials are enabled.
 //
 // ============================================================
 
-var configuredFrontendUrls =
+var configuredFrontendOrigins =
     builder.Configuration["FRONTEND_URLS"]
-    ?? builder.Configuration["FRONTEND_URL"]
     ?? string.Empty;
 
-static string? NormalizeCorsOrigin(string value)
-{
-    var trimmed =
-        value.Trim();
-
-    if (
-        string.IsNullOrWhiteSpace(
-            trimmed
-        )
-    )
-    {
-        return null;
-    }
-
-    if (
-        Uri.TryCreate(
-            trimmed,
-            UriKind.Absolute,
-            out var uri
-        )
-    )
-    {
-        return uri.GetLeftPart(
-            UriPartial.Authority
-        );
-    }
-
-    return trimmed.TrimEnd('/');
-}
-
 var allowedOrigins =
-    configuredFrontendUrls
+    configuredFrontendOrigins
         .Split(
             new[] { ',', ';' },
-            StringSplitOptions.RemoveEmptyEntries
-        )
-        .Select(NormalizeCorsOrigin)
-        .Where(x => !string.IsNullOrWhiteSpace(x))
-        .Select(x => x!)
-        .ToList();
+            StringSplitOptions.RemoveEmptyEntries)
+        .Select(origin => origin.Trim().TrimEnd('/'))
+        .Append(FrontendUrlResolver.Resolve(builder.Configuration))
+        .Append("http://localhost:8088")
+        .Append("http://127.0.0.1:8088")
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
 
-// Preserve local development origins while requiring LAN origins to be
-// explicitly configured through FRONTEND_URLS or FRONTEND_URL.
-allowedOrigins.Add(
-    "http://localhost:5173"
+Log.Information(
+    "CORS allowed origins loaded: {AllowedOrigins}",
+    string.Join(
+        ", ",
+        allowedOrigins
+    )
 );
-
-allowedOrigins.Add(
-    "http://127.0.0.1:5173"
-);
-
-allowedOrigins.Add(
-    "http://192.168.1.115:5173"
-);
-
-allowedOrigins.Add(
-    "http://10.1.40.52:5173"
-);
-
-allowedOrigins.Add(
-    "http://10.4.3.79:8088"
-);
-
-// Remove duplicate origins.
-allowedOrigins =
-    allowedOrigins
-        .Distinct(
-            StringComparer.OrdinalIgnoreCase
-        )
-        .ToList();
 
 builder.Services
     .AddCors(options =>
@@ -315,6 +267,7 @@ builder.Services
             }
         );
     });
+
 
 // ============================================================
 // RATE LIMITING
@@ -359,6 +312,7 @@ builder.Services
         );
     });
 
+
 // ============================================================
 // SWAGGER
 // ============================================================
@@ -377,6 +331,7 @@ var swaggerEnabled =
         out var configuredSwagger
     )
     || configuredSwagger;
+
 
 // ============================================================
 // ORACLE CONFIGURATION
@@ -428,12 +383,14 @@ builder.Services
 builder.Services
     .AddScoped<OracleService>();
 
+
 // ============================================================
 // DATA PROTECTION
 // ============================================================
 
 builder.Services
     .AddDataProtection();
+
 
 // ============================================================
 // REGISTRATION / OTP / PASSWORD SETUP
@@ -454,6 +411,7 @@ builder.Services
         EmailOtpSender
     >();
 
+
 // ============================================================
 // ORACLE INVOICE HTTP CLIENT
 // ============================================================
@@ -462,6 +420,7 @@ builder.Services
     .AddHttpClient(
         "oracle-invoice"
     );
+
 
 // ============================================================
 // BACKGROUND WORKERS
@@ -487,6 +446,7 @@ builder.Services
         DataRetentionWorker
     >();
 
+
 // ============================================================
 // API URLS
 // ============================================================
@@ -497,8 +457,9 @@ builder.WebHost
             "API_URLS"
         ]
         ??
-        "http://0.0.0.0:5044"
+        "http://0.0.0.0:8099"
     );
+
 
 // ============================================================
 // BUILD APPLICATION
@@ -506,6 +467,7 @@ builder.WebHost
 
 var app =
     builder.Build();
+
 
 // ============================================================
 // GLOBAL ERROR HANDLING
@@ -516,6 +478,7 @@ app.UseMiddleware<
 >();
 
 app.UseSerilogRequestLogging();
+
 
 // ============================================================
 // HTTPS / HSTS
@@ -530,6 +493,7 @@ if (
 
     app.UseHsts();
 }
+
 
 // ============================================================
 // SECURITY HEADERS
@@ -560,6 +524,7 @@ app.Use(
     }
 );
 
+
 // ============================================================
 // SWAGGER
 // ============================================================
@@ -583,12 +548,14 @@ if (swaggerEnabled)
     );
 }
 
+
 // ============================================================
 // REQUEST PIPELINE
 // ============================================================
 
 // IMPORTANT:
 // CORS must run before authentication / authorization.
+
 app.UseCors(
     "frontend"
 );
@@ -618,9 +585,11 @@ app.UseAuthentication();
  *
  * DO NOT DELETE PostgresRlsMiddleware.cs.
  */
+
 // app.UseMiddleware<PostgresRlsMiddleware>();
 
 app.UseAuthorization();
+
 
 // ============================================================
 // HEALTH ENDPOINT
@@ -643,11 +612,13 @@ app.MapGet(
     )
     .AllowAnonymous();
 
+
 // ============================================================
 // AUTHENTICATION
 // ============================================================
 
 app.MapAuthEndpoints();
+
 
 // ============================================================
 // SELF REGISTRATION
@@ -655,11 +626,13 @@ app.MapAuthEndpoints();
 
 app.MapRegistrationEndpoints();
 
+
 // ============================================================
 // ORACLE
 // ============================================================
 
 app.MapOracleEndpoints();
+
 
 // ============================================================
 // DASHBOARD
@@ -667,11 +640,13 @@ app.MapOracleEndpoints();
 
 app.MapDashboardEndpoints();
 
+
 // ============================================================
 // DOCUMENTS
 // ============================================================
 
 app.MapDocumentEndpoints();
+
 
 // ============================================================
 // PURCHASE ORDERS
@@ -679,11 +654,13 @@ app.MapDocumentEndpoints();
 
 app.MapPurchaseOrderEndpoints();
 
+
 // ============================================================
 // GRNs
 // ============================================================
 
 app.MapGrnEndpoints();
+
 
 // ============================================================
 // INVOICES
@@ -691,11 +668,13 @@ app.MapGrnEndpoints();
 
 app.MapInvoiceEndpoints();
 
+
 // ============================================================
 // NOTIFICATIONS
 // ============================================================
 
 app.MapNotificationEndpoints();
+
 
 // ============================================================
 // INTEGRATION
@@ -703,11 +682,13 @@ app.MapNotificationEndpoints();
 
 app.MapIntegrationEndpoints();
 
+
 // ============================================================
 // VENDOR ACCESS
 // ============================================================
 
 app.MapVendorAccessEndpoints();
+
 
 // ============================================================
 // ADMIN VENDOR ONBOARDING
@@ -715,11 +696,13 @@ app.MapVendorAccessEndpoints();
 
 app.MapAdminVendorAccessEndpoints();
 
+
 // ============================================================
 // ADMIN
 // ============================================================
 
 app.MapAdminEndpoints();
+
 
 // ============================================================
 // FALLBACK
@@ -739,6 +722,7 @@ app.MapFallback(
         "api"
     );
 
+
 // ============================================================
 // BOOTSTRAP USERS / ROLES
 // ============================================================
@@ -749,6 +733,7 @@ await Bootstrapper
         app.Configuration,
         app.Logger
     );
+
 
 // ============================================================
 // START APPLICATION

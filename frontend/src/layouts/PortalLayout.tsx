@@ -7,14 +7,29 @@ import {
 import {
   NavLink,
   Outlet,
+  useLocation,
   useNavigate,
 } from "react-router-dom";
 
-import { useAuth } from "../auth/AuthContext";
-import { api } from "../api/client";
-import { getMySupplier } from "../api/portal";
-import { Icon } from "../components/Icons";
-import type { OracleSupplier } from "../types";
+import {
+  useAuth,
+} from "../auth/AuthContext";
+
+import {
+  api,
+} from "../api/client";
+
+import {
+  getMySupplier,
+} from "../api/portal";
+
+import {
+  Icon,
+} from "../components/Icons";
+
+import type {
+  OracleSupplier,
+} from "../types";
 
 type MenuItem = [
   string,
@@ -34,60 +49,97 @@ type NotificationItem = {
 };
 
 export function PortalLayout() {
-  const { user, logout, hasPermission } = useAuth();
+  const {
+    user,
+    logout,
+    hasPermission,
+  } =
+    useAuth();
 
   const navigate =
     useNavigate();
 
+  const location =
+    useLocation();
+
   const [
     unreadCount,
     setUnreadCount,
-  ] = useState(0);
+  ] =
+    useState(0);
 
   const [
     notifications,
     setNotifications,
-  ] = useState<
-    NotificationItem[]
-  >([]);
+  ] =
+    useState<
+      NotificationItem[]
+    >([]);
 
   const [
     notificationOpen,
     setNotificationOpen,
-  ] = useState(false);
+  ] =
+    useState(false);
 
   const [
     notificationLoading,
     setNotificationLoading,
-  ] = useState(false);
+  ] =
+    useState(false);
 
   const notificationRef =
-    useRef<HTMLDivElement | null>(
-      null
-    );
+    useRef<
+      HTMLDivElement | null
+    >(null);
 
   const profileRef =
-    useRef<HTMLDivElement | null>(
-      null
-    );
+    useRef<
+      HTMLDivElement | null
+    >(null);
 
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [profileLoading, setProfileLoading] = useState(false);
-  const [supplier, setSupplier] = useState<OracleSupplier | null>(null);
+  const [
+    profileOpen,
+    setProfileOpen,
+  ] =
+    useState(false);
+
+  const [
+    profileLoading,
+    setProfileLoading,
+  ] =
+    useState(false);
+
+  const [
+    supplier,
+    setSupplier,
+  ] =
+    useState<
+      OracleSupplier | null
+    >(null);
 
   const [
     sidebarPinnedOpen,
     setSidebarPinnedOpen,
-  ] = useState(() =>
-    window.localStorage.getItem(
-      "portal-sidebar-pinned"
-    ) === "true"
-  );
+  ] =
+    useState(
+      () =>
+        window.localStorage.getItem(
+          "portal-sidebar-pinned"
+        ) === "true"
+    );
 
   const [
     sidebarHovered,
     setSidebarHovered,
-  ] = useState(false);
+  ] =
+    useState(false);
+
+  const [
+    mobileSidebarOpen,
+    setMobileSidebarOpen,
+  ] =
+    useState(false);
 
   const sidebarExpanded =
     sidebarPinnedOpen ||
@@ -100,7 +152,61 @@ export function PortalLayout() {
         ? "true"
         : "false"
     );
-  }, [sidebarPinnedOpen]);
+  }, [
+    sidebarPinnedOpen,
+  ]);
+
+  useEffect(() => {
+    setMobileSidebarOpen(
+      false
+    );
+  }, [
+    location.pathname,
+  ]);
+
+  useEffect(() => {
+    const handleResize =
+      () => {
+        if (
+          window.innerWidth >
+          760
+        ) {
+          setMobileSidebarOpen(
+            false
+          );
+        }
+      };
+
+    window.addEventListener(
+      "resize",
+      handleResize
+    );
+
+    return () =>
+      window.removeEventListener(
+        "resize",
+        handleResize
+      );
+  }, []);
+
+  useEffect(() => {
+    if (
+      window.innerWidth <=
+      760
+    ) {
+      document.body.style.overflow =
+        mobileSidebarOpen
+          ? "hidden"
+          : "";
+    }
+
+    return () => {
+      document.body.style.overflow =
+        "";
+    };
+  }, [
+    mobileSidebarOpen,
+  ]);
 
   // ============================================================
   // UNREAD COUNT
@@ -111,7 +217,8 @@ export function PortalLayout() {
       return;
     }
 
-    let mounted = true;
+    let mounted =
+      true;
 
     const loadUnreadCount =
       async () => {
@@ -142,51 +249,68 @@ export function PortalLayout() {
       );
 
     return () => {
-      mounted = false;
+      mounted =
+        false;
 
       window.clearInterval(
         timer
       );
     };
-  }, [user]);
+  }, [
+    user,
+  ]);
 
   // ============================================================
   // CLOSE NOTIFICATION / PROFILE POPUP
   // ============================================================
 
   useEffect(() => {
-    const handleOutsideClick = (
-      event: MouseEvent
-    ) => {
-      if (
-        notificationRef.current &&
-        !notificationRef.current.contains(
-          event.target as Node
-        )
-      ) {
-        setNotificationOpen(false);
-      }
+    const handleOutsideClick =
+      (
+        event:
+          MouseEvent
+      ) => {
+        if (
+          notificationRef.current &&
+          !notificationRef.current.contains(
+            event.target as Node
+          )
+        ) {
+          setNotificationOpen(
+            false
+          );
+        }
 
-      if (
-        profileRef.current &&
-        !profileRef.current.contains(
-          event.target as Node
-        )
-      ) {
-        setProfileOpen(false);
-      }
-    };
+        if (
+          profileRef.current &&
+          !profileRef.current.contains(
+            event.target as Node
+          )
+        ) {
+          setProfileOpen(
+            false
+          );
+        }
+      };
 
-    const handleEscape = (
-      event: KeyboardEvent
-    ) => {
-      if (
-        event.key === "Escape"
-      ) {
-        setNotificationOpen(false);
-        setProfileOpen(false);
-      }
-    };
+    const handleEscape =
+      (
+        event:
+          KeyboardEvent
+      ) => {
+        if (
+          event.key ===
+          "Escape"
+        ) {
+          setNotificationOpen(
+            false
+          );
+
+          setProfileOpen(
+            false
+          );
+        }
+      };
 
     document.addEventListener(
       "mousedown",
@@ -216,89 +340,267 @@ export function PortalLayout() {
   }
 
   const isVendor =
-    user.userType === "VENDOR";
+    user.userType ===
+    "VENDOR";
 
   const isAdmin =
-    user.userType === "ADMIN";
+    user.userType ===
+    "ADMIN";
 
   const internalRoles =
-    (user.roles ?? []).map((role) => role.toUpperCase());
+    (
+      user.roles ??
+      []
+    ).map(
+      (role) =>
+        role.toUpperCase()
+    );
 
   const isFinance =
     !isVendor &&
     !isAdmin &&
-    (internalRoles.includes("FINANCE") ||
-      user.permissions.includes("INVOICE.VIEW_ALL"));
+    (
+      internalRoles.includes(
+        "FINANCE"
+      ) ||
+      user.permissions.includes(
+        "INVOICE.VIEW_ALL"
+      )
+    );
 
   const isSupplyChain =
     !isVendor &&
     !isAdmin &&
     !isFinance &&
-    (internalRoles.includes("SUPPLY_CHAIN") ||
-      user.permissions.includes("VENDOR.MANAGE"));
+    (
+      internalRoles.includes(
+        "SUPPLY_CHAIN"
+      ) ||
+      user.permissions.includes(
+        "VENDOR.MANAGE"
+      )
+    );
 
   // ============================================================
   // SIDEBAR
   // ============================================================
 
-  const can = (permission: string) =>
-    hasPermission(permission);
+  const can =
+    (
+      permission:
+        string
+    ) =>
+      hasPermission(
+        permission
+      );
 
-  const items: MenuItem[] = isVendor
-    ? [
-        ...(can("DASHBOARD.VIEW")
-          ? [["/vendor", "Dashboard", "dashboard"] as MenuItem]
-          : []),
-        ...(can("PO.VIEW")
-          ? [["/purchase-orders", "Purchase Orders", "po"] as MenuItem]
-          : []),
-        ...(can("INVOICE.CREATE")
-          ? [["/invoices/new", "Submit Invoice", "invoice"] as MenuItem]
-          : []),
-        ...(can("INVOICE.VIEW_OWN") || can("INVOICE.VIEW_ALL")
-          ? [["/invoices", "Invoice History", "history"] as MenuItem]
-          : []),
-        ...(can("PAYMENT.VIEW")
-          ? [["/payments", "Payments", "payment"] as MenuItem]
-          : []),
-      ]
-    : isAdmin
+  const items:
+    MenuItem[] =
+    isVendor
       ? [
-          ["/admin", "Dashboard", "dashboard"],
-          ["/admin/users-roles", "Users & Roles", "admin"],
-          ["/admin/vendors", "Vendor Access", "po"],
-          ["/integration", "Integration Support", "integration"],
-          ["/admin/audit", "Audit Logs", "history"],
+          ...(can(
+            "DASHBOARD.VIEW"
+          )
+            ? [
+                [
+                  "/vendor",
+                  "Dashboard",
+                  "dashboard",
+                ] as MenuItem,
+              ]
+            : []),
+
+          ...(can(
+            "PO.VIEW"
+          )
+            ? [
+                [
+                  "/purchase-orders",
+                  "Purchase Orders",
+                  "po",
+                ] as MenuItem,
+              ]
+            : []),
+
+          ...(can(
+            "INVOICE.CREATE"
+          )
+            ? [
+                [
+                  "/invoices/new",
+                  "Submit Invoice",
+                  "invoice",
+                ] as MenuItem,
+              ]
+            : []),
+
+          ...(
+            can(
+              "INVOICE.VIEW_OWN"
+            ) ||
+            can(
+              "INVOICE.VIEW_ALL"
+            )
+              ? [
+                  [
+                    "/invoices",
+                    "Invoice History",
+                    "history",
+                  ] as MenuItem,
+                ]
+              : []
+          ),
+
+          ...(can(
+            "PAYMENT.VIEW"
+          )
+            ? [
+                [
+                  "/payments",
+                  "Payments",
+                  "payment",
+                ] as MenuItem,
+              ]
+            : []),
         ]
-      : isFinance
+      : isAdmin
         ? [
-            ...(can("DASHBOARD.VIEW")
-              ? [["/internal", "Dashboard", "dashboard"] as MenuItem]
-              : []),
-            ...(can("INVOICE.VIEW_ALL")
-              ? [["/finance/invoices", "Invoice Records", "invoice"] as MenuItem]
-              : []),
-            ...(can("INTEGRATION.VIEW")
-              ? [["/integration", "Integration Issues", "integration"] as MenuItem]
-              : []),
+            [
+              "/admin",
+              "Dashboard",
+              "dashboard",
+            ],
+
+            [
+              "/admin/users-roles",
+              "Users & Roles",
+              "admin",
+            ],
+
+            [
+              "/admin/vendors",
+              "Vendor Access",
+              "po",
+            ],
+
+            [
+              "/integration",
+              "Integration Support",
+              "integration",
+            ],
+
+            [
+              "/admin/audit",
+              "Audit Logs",
+              "history",
+            ],
           ]
-        : isSupplyChain
+        : isFinance
           ? [
-              ...(can("DASHBOARD.VIEW")
-                ? [["/internal", "Dashboard", "dashboard"] as MenuItem]
+              ...(can(
+                "DASHBOARD.VIEW"
+              )
+                ? [
+                    [
+                      "/internal",
+                      "Dashboard",
+                      "dashboard",
+                    ] as MenuItem,
+                  ]
                 : []),
-              ...(can("VENDOR.MANAGE")
-                ? [["/supply-chain/vendors", "Vendor Access", "admin"] as MenuItem]
+
+              ...(can(
+                "INVOICE.VIEW_ALL"
+              )
+                ? [
+                    [
+                      "/finance/invoices",
+                      "Invoice Records",
+                      "invoice",
+                    ] as MenuItem,
+                  ]
+                : []),
+
+              ...(can(
+                "INTEGRATION.VIEW"
+              )
+                ? [
+                    [
+                      "/integration",
+                      "Integration Issues",
+                      "integration",
+                    ] as MenuItem,
+                  ]
                 : []),
             ]
-          : [
-              ...(can("DASHBOARD.VIEW")
-                ? [["/internal", "Dashboard", "dashboard"] as MenuItem]
-                : []),
-              ...(can("INTEGRATION.VIEW")
-                ? [["/integration", "Integration Support", "integration"] as MenuItem]
-                : []),
-            ];
+          : isSupplyChain
+            ? [
+                ...(can(
+                  "DASHBOARD.VIEW"
+                )
+                  ? [
+                      [
+                        "/internal",
+                        "Dashboard",
+                        "dashboard",
+                      ] as MenuItem,
+                    ]
+                  : []),
+
+                ...(can(
+                  "VENDOR.MANAGE"
+                )
+                  ? [
+                      [
+                        "/supply-chain/vendors",
+                        "Vendor Access",
+                        "admin",
+                      ] as MenuItem,
+                    ]
+                  : []),
+
+                ...(
+                  can(
+                    "SUPPLY_CHAIN_GRN_VIEW"
+                  ) ||
+                  can(
+                    "VENDOR.MANAGE"
+                  )
+                    ? [
+                        [
+                          "/supply-chain/qc-pending-grns",
+                          "QC Pending GRNs",
+                          "grn",
+                        ] as MenuItem,
+                      ]
+                    : []
+                ),
+              ]
+            : [
+                ...(can(
+                  "DASHBOARD.VIEW"
+                )
+                  ? [
+                      [
+                        "/internal",
+                        "Dashboard",
+                        "dashboard",
+                      ] as MenuItem,
+                    ]
+                  : []),
+
+                ...(can(
+                  "INTEGRATION.VIEW"
+                )
+                  ? [
+                      [
+                        "/integration",
+                        "Integration Support",
+                        "integration",
+                      ] as MenuItem,
+                    ]
+                  : []),
+              ];
 
   // ============================================================
   // NOTIFICATIONS
@@ -322,13 +624,19 @@ export function PortalLayout() {
           )
             ? response.data
             : response.data
-                ?.items ?? [];
+                ?.items ??
+              [];
 
         setNotifications(
-          data.slice(0, 5)
+          data.slice(
+            0,
+            5
+          )
         );
       } catch {
-        setNotifications([]);
+        setNotifications(
+          []
+        );
       } finally {
         setNotificationLoading(
           false
@@ -345,7 +653,9 @@ export function PortalLayout() {
         nextState
       );
 
-      if (nextState) {
+      if (
+        nextState
+      ) {
         await loadNotifications();
       }
     };
@@ -367,24 +677,32 @@ export function PortalLayout() {
         );
 
         setNotifications(
-          (current) =>
+          (
+            current
+          ) =>
             current.map(
-              (item) =>
+              (
+                item
+              ) =>
                 item.id ===
                 notification.id
                   ? {
                       ...item,
-                      isRead: true,
+                      isRead:
+                        true,
                     }
                   : item
             )
         );
 
         setUnreadCount(
-          (current) =>
+          (
+            current
+          ) =>
             Math.max(
               0,
-              current - 1
+              current -
+                1
             )
         );
       } catch {
@@ -400,29 +718,43 @@ export function PortalLayout() {
         );
 
         setNotifications(
-          (current) =>
+          (
+            current
+          ) =>
             current.map(
-              (item) => ({
+              (
+                item
+              ) => ({
                 ...item,
-                isRead: true,
+                isRead:
+                  true,
               })
             )
         );
 
-        setUnreadCount(0);
+        setUnreadCount(
+          0
+        );
       } catch {
         // Ignore update errors.
       }
     };
 
   const formatNotificationTime =
-    (value: string) => {
-      if (!value) {
+    (
+      value:
+        string
+    ) => {
+      if (
+        !value
+      ) {
         return "";
       }
 
       const date =
-        new Date(value);
+        new Date(
+          value
+        );
 
       if (
         Number.isNaN(
@@ -441,7 +773,9 @@ export function PortalLayout() {
 
   const handleProfileClick =
     async () => {
-      if (!isVendor) {
+      if (
+        !isVendor
+      ) {
         return;
       }
 
@@ -493,6 +827,10 @@ export function PortalLayout() {
         sidebarPinnedOpen
           ? "sidebar-pinned-open"
           : "sidebar-pinned-closed"
+      } ${
+        mobileSidebarOpen
+          ? "mobile-menu-open"
+          : ""
       }`}
     >
       <aside
@@ -500,12 +838,20 @@ export function PortalLayout() {
           sidebarExpanded
             ? "expanded"
             : "collapsed"
+        } ${
+          mobileSidebarOpen
+            ? "mobile-open"
+            : ""
         }`}
         onMouseEnter={() =>
-          setSidebarHovered(true)
+          setSidebarHovered(
+            true
+          )
         }
         onMouseLeave={() =>
-          setSidebarHovered(false)
+          setSidebarHovered(
+            false
+          )
         }
       >
         <button
@@ -513,7 +859,9 @@ export function PortalLayout() {
           className="sidebar-toggle"
           onClick={() =>
             setSidebarPinnedOpen(
-              (current) =>
+              (
+                current
+              ) =>
                 !current
             )
           }
@@ -544,6 +892,7 @@ export function PortalLayout() {
               stroke="currentColor"
               strokeWidth="1.8"
             />
+
             <path
               d="M9 4v16"
               fill="none"
@@ -579,13 +928,22 @@ export function PortalLayout() {
               icon,
             ]) => (
               <NavLink
-                key={to}
-                to={to}
+                key={
+                  to
+                }
+                to={
+                  to
+                }
                 end
                 title={
                   sidebarExpanded
                     ? undefined
                     : label
+                }
+                onClick={() =>
+                  setMobileSidebarOpen(
+                    false
+                  )
                 }
                 className={({
                   isActive,
@@ -596,7 +954,9 @@ export function PortalLayout() {
                 }
               >
                 <Icon
-                  name={icon}
+                  name={
+                    icon
+                  }
                 />
 
                 <span>
@@ -616,6 +976,10 @@ export function PortalLayout() {
               : "Logout"
           }
           onClick={() => {
+            setMobileSidebarOpen(
+              false
+            );
+
             logout();
 
             navigate(
@@ -623,7 +987,9 @@ export function PortalLayout() {
             );
           }}
         >
-          <Icon name="logout" />
+          <Icon
+            name="logout"
+          />
 
           <span>
             Logout
@@ -631,10 +997,53 @@ export function PortalLayout() {
         </button>
       </aside>
 
+      {mobileSidebarOpen && (
+        <button
+          type="button"
+          className="mobile-sidebar-backdrop"
+          aria-label="Close navigation menu"
+          onClick={() =>
+            setMobileSidebarOpen(
+              false
+            )
+          }
+        />
+      )}
+
       <section className="portal-main">
         <header className="portal-topbar">
-          <div>
-            <h1>
+          <div className="portal-topbar-left">
+            <button
+              type="button"
+              className="mobile-menu-toggle"
+              aria-label={
+                mobileSidebarOpen
+                  ? "Close navigation menu"
+                  : "Open navigation menu"
+              }
+              aria-expanded={
+                mobileSidebarOpen
+              }
+              onClick={() => {
+                setNotificationOpen(
+                  false
+                );
+                setProfileOpen(
+                  false
+                );
+                setMobileSidebarOpen(
+                  (current) =>
+                    !current
+                );
+              }}
+            >
+              <span />
+              <span />
+              <span />
+            </button>
+
+            <div className="portal-topbar-title">
+              <h1>
               {isVendor
                 ? "Dashboard"
                 : isAdmin
@@ -646,10 +1055,11 @@ export function PortalLayout() {
                       : "Internal Portal"}
             </h1>
 
-            <p>
-              Welcome back,{" "}
-              {user.fullName}.
-            </p>
+              <p>
+                Welcome back,{" "}
+                {user.fullName}.
+              </p>
+            </div>
           </div>
 
           <div className="top-actions">
@@ -659,7 +1069,9 @@ export function PortalLayout() {
 
             <div
               className="notification-wrapper"
-              ref={notificationRef}
+              ref={
+                notificationRef
+              }
             >
               <button
                 type="button"
@@ -676,7 +1088,9 @@ export function PortalLayout() {
                   notificationOpen
                 }
               >
-                <Icon name="bell" />
+                <Icon
+                  name="bell"
+                />
 
                 {unreadCount >
                   0 && (
@@ -720,14 +1134,12 @@ export function PortalLayout() {
                   <div className="notification-popup-body">
                     {notificationLoading ? (
                       <div className="notification-empty">
-                        Loading
-                        notifications...
+                        Loading notifications...
                       </div>
                     ) : notifications.length ===
                       0 ? (
                       <div className="notification-empty">
-                        No notifications
-                        yet.
+                        No notifications yet.
                       </div>
                     ) : (
                       notifications.map(
@@ -790,8 +1202,7 @@ export function PortalLayout() {
                       );
                     }}
                   >
-                    See All
-                    Notifications
+                    See All Notifications
 
                     <span>
                       →
@@ -804,7 +1215,9 @@ export function PortalLayout() {
             {isVendor ? (
               <div
                 className="vendor-profile-wrapper"
-                ref={profileRef}
+                ref={
+                  profileRef
+                }
               >
                 <button
                   type="button"
@@ -854,8 +1267,7 @@ export function PortalLayout() {
 
                     {profileLoading ? (
                       <div className="vendor-profile-popup-loading">
-                        Loading vendor
-                        profile...
+                        Loading vendor profile...
                       </div>
                     ) : (
                       <dl>

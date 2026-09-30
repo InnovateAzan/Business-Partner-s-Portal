@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+
 import { Icon } from "../components/Icons";
+
 import {
   getMyOracleInvoices,
   getMyPoGrns,
   getMySupplier,
   getMyPortalInvoices,
 } from "../api/portal";
+
 import type {
   OracleInvoice,
   OraclePoGrn,
@@ -14,23 +17,48 @@ import type {
   PortalInvoice,
 } from "../types";
 
-const money = (v: number | null | undefined) =>
-  `PKR ${Number(v || 0).toLocaleString()}`;
+import {
+  formatPakistanFiscalWindowStart,
+} from "../utils/pakistanFiscalWindow";
 
-const formatDate = (value?: string | null) => {
-  if (!value) return "-";
+// ============================================================
+// HELPERS
+// ============================================================
 
-  const date = new Date(value);
+const money = (
+  v: number | null | undefined
+) =>
+  `PKR ${Number(
+    v || 0
+  ).toLocaleString()}`;
 
-  return date.toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
+const formatDate = (
+  value?: string | null
+) => {
+  if (!value) {
+    return "-";
+  }
+
+  const date =
+    new Date(value);
+
+  return date.toLocaleDateString(
+    "en-GB",
+    {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    }
+  );
 };
 
-const qcLabel = (s?: string | null) => {
-  const x = (s || "").toUpperCase();
+const qcLabel = (
+  s?: string | null
+) => {
+  const x =
+    (
+      s || ""
+    ).toUpperCase();
 
   if (
     [
@@ -44,36 +72,73 @@ const qcLabel = (s?: string | null) => {
     return "Pending with QC";
   }
 
-  if (x === "ACCEPTED") return "Available";
-  if (x === "REJECTED") return "Rejected";
-
-  return s || "Not Required";
-};
-
-const statusClass = (s?: string | null) => {
-  const x = (s || "").toUpperCase();
+  if (
+    x === "ACCEPTED"
+  ) {
+    return "Available";
+  }
 
   if (
-    x.includes("PAID") ||
-    x.includes("ACCEPT") ||
-    x.includes("APPROV") ||
-    x.includes("AVAILABLE") ||
-    x.includes("SUCCESS")
+    x === "REJECTED"
+  ) {
+    return "Rejected";
+  }
+
+  return (
+    s ||
+    "Not Required"
+  );
+};
+
+const statusClass = (
+  s?: string | null
+) => {
+  const x =
+    (
+      s || ""
+    ).toUpperCase();
+
+  if (
+    x.includes(
+      "PAID"
+    ) ||
+    x.includes(
+      "ACCEPT"
+    ) ||
+    x.includes(
+      "APPROV"
+    ) ||
+    x.includes(
+      "AVAILABLE"
+    ) ||
+    x.includes(
+      "SUCCESS"
+    )
   ) {
     return "green";
   }
 
   if (
-    x.includes("RETURN") ||
-    x.includes("REJECT") ||
-    x.includes("CANCEL")
+    x.includes(
+      "RETURN"
+    ) ||
+    x.includes(
+      "REJECT"
+    ) ||
+    x.includes(
+      "CANCEL"
+    )
   ) {
     return "red";
   }
 
   if (
-    x.includes("PENDING") ||
-    x.includes("NOT RECEIVED")
+    x.includes(
+      "PENDING"
+    ) ||
+    x.includes(
+      "NOT RECEIVED"
+    )
   ) {
     return "orange";
   }
@@ -94,40 +159,101 @@ const statusClass = (s?: string | null) => {
 const dashboardInvoiceStatus = (
   status?: string | null
 ) => {
-  const normalized = (status || "")
-    .trim()
-    .toUpperCase()
-    .replace(/_/g, " ");
+  const normalized =
+    (
+      status ||
+      ""
+    )
+      .trim()
+      .toUpperCase()
+      .replace(
+        /_/g,
+        " "
+      );
 
   if (
-    normalized === "PENDING" ||
-    normalized === "PENDING FOR APPROVAL" ||
-    normalized === "PENDING APPROVAL" ||
-    normalized === "SENT TO ORACLE" ||
-    normalized === "SUBMITTED" ||
-    normalized === "RESUBMITTED"
+    normalized ===
+      "PENDING" ||
+    normalized ===
+      "PENDING FOR APPROVAL" ||
+    normalized ===
+      "PENDING APPROVAL" ||
+    normalized ===
+      "SENT TO ORACLE" ||
+    normalized ===
+      "SUBMITTED" ||
+    normalized ===
+      "RESUBMITTED"
   ) {
     return "Submitted";
   }
 
-  return status || "Submitted";
+  return (
+    status ||
+    "Submitted"
+  );
 };
 
+// ============================================================
+// PAGE
+// ============================================================
+
 export function VendorDashboard() {
-  const [supplier, setSupplier] =
-    useState<OracleSupplier | null>(null);
+  const [
+    supplier,
+    setSupplier,
+  ] =
+    useState<
+      OracleSupplier | null
+    >(null);
 
-  const [rows, setRows] =
-    useState<OraclePoGrn[]>([]);
+  const [
+    rows,
+    setRows,
+  ] =
+    useState<
+      OraclePoGrn[]
+    >([]);
 
-  const [invoices, setInvoices] =
-    useState<OracleInvoice[]>([]);
+  const [
+    invoices,
+    setInvoices,
+  ] =
+    useState<
+      OracleInvoice[]
+    >([]);
 
-  const [portalInvoices, setPortalInvoices] =
-    useState<PortalInvoice[]>([]);
+  const [
+    portalInvoices,
+    setPortalInvoices,
+  ] =
+    useState<
+      PortalInvoice[]
+    >([]);
 
-  const [error, setError] =
+  const [
+    error,
+    setError,
+  ] =
     useState("");
+
+  // ============================================================
+  // FISCAL WINDOW DISPLAY
+  // FY starts 01-Jul.
+  // Previous 3 months are included, so display starts 01-Apr.
+  // Example FY 2026-27 => Data from 01 Apr 2026
+  // ============================================================
+
+  const dataFromDate =
+    useMemo(
+      () =>
+        formatPakistanFiscalWindowStart(),
+      []
+    );
+
+  // ============================================================
+  // LOAD DASHBOARD DATA
+  // ============================================================
 
   useEffect(() => {
     Promise.all([
@@ -136,95 +262,202 @@ export function VendorDashboard() {
       getMyOracleInvoices(),
       getMyPortalInvoices(),
     ])
-      .then(([s, p, i, pi]) => {
-        setSupplier(s);
-        setRows(p);
-        setInvoices(i);
-        setPortalInvoices(pi);
-      })
-      .catch((e) =>
-        setError(
-          e?.response?.data?.message ||
-            e.message
-        )
+      .then(
+        (
+          [
+            s,
+            p,
+            i,
+            pi,
+          ]
+        ) => {
+          setSupplier(
+            s
+          );
+
+          setRows(
+            p
+          );
+
+          setInvoices(
+            i
+          );
+
+          setPortalInvoices(
+            pi
+          );
+        }
+      )
+      .catch(
+        (
+          e
+        ) =>
+          setError(
+            e?.response
+              ?.data
+              ?.message ||
+              e.message
+          )
       );
   }, []);
 
-  const poMap = useMemo(
-    () =>
-      new Map(
-        rows
-          .filter((x) => x.poNumber)
-          .map((x) => [
-            x.poNumber,
-            x,
-          ])
-      ),
-    [rows]
-  );
+  // ============================================================
+  // PURCHASE ORDERS
+  // ============================================================
+
+  const poMap =
+    useMemo(
+      () =>
+        new Map(
+          rows
+            .filter(
+              (
+                x
+              ) =>
+                x.poNumber
+            )
+            .map(
+              (
+                x
+              ) => [
+                x.poNumber,
+                x,
+              ]
+            )
+        ),
+      [
+        rows,
+      ]
+    );
+
+  // ============================================================
+  // GRNS
+  // ============================================================
 
   const grns =
     rows.filter(
-      (x) => x.grnNumber
+      (
+        x
+      ) =>
+        x.grnNumber
     );
+
+  // ============================================================
+  // PORTAL / ORACLE INVOICES
+  // ============================================================
 
   const submittedKeys =
     new Set(
-      invoices.map((x) =>
-        x.invoiceNumber.toLowerCase()
+      invoices.map(
+        (
+          x
+        ) =>
+          x.invoiceNumber.toLowerCase()
       )
     );
 
   const pendingPortal =
     portalInvoices.filter(
-      (x) =>
+      (
+        x
+      ) =>
         !submittedKeys.has(
           (
-            x.invoiceNumber || ""
+            x.invoiceNumber ||
+            ""
           ).toLowerCase()
         )
     );
 
+  // ============================================================
+  // PAID
+  // ============================================================
+
   const paid =
-    invoices.filter((x) =>
+    invoices.filter(
       (
-        x.paymentStatus || ""
-      )
-        .toUpperCase()
-        .includes("PAID")
+        x
+      ) =>
+        (
+          x.paymentStatus ||
+          ""
+        )
+          .toUpperCase()
+          .includes(
+            "PAID"
+          )
     );
+
+  // ============================================================
+  // RETURNED
+  // ============================================================
 
   const returned =
-    invoices.filter((x) =>
+    invoices.filter(
       (
-        x.approvalStatus || ""
-      )
-        .toUpperCase()
-        .includes("RETURN")
+        x
+      ) =>
+        (
+          x.approvalStatus ||
+          ""
+        )
+          .toUpperCase()
+          .includes(
+            "RETURN"
+          )
     );
 
+  // ============================================================
+  // CANCELLED
+  // ============================================================
+
   const cancelled =
-    invoices.filter((x) =>
+    invoices.filter(
       (
-        x.approvalStatus || ""
-      )
-        .toUpperCase()
-        .includes("CANCEL")
+        x
+      ) =>
+        (
+          x.approvalStatus ||
+          ""
+        )
+          .toUpperCase()
+          .includes(
+            "CANCEL"
+          )
     );
+
+  // ============================================================
+  // TOTALS
+  // ============================================================
 
   const paidAmt =
     paid.reduce(
-      (a, x) =>
-        a + (x.amountPaid || 0),
+      (
+        a,
+        x
+      ) =>
+        a +
+        (
+          x.amountPaid ||
+          0
+        ),
       0
     );
 
   const totalInv =
     invoices.reduce(
-      (a, x) =>
-        a + x.invoiceAmount,
+      (
+        a,
+        x
+      ) =>
+        a +
+        x.invoiceAmount,
       0
     );
+
+  // ============================================================
+  // RENDER
+  // ============================================================
 
   return (
     <div className="dashboard-v2">
@@ -234,10 +467,32 @@ export function VendorDashboard() {
         </div>
       )}
 
+      {/* ========================================================
+          DATA VISIBILITY + LAST UPDATED
+      ======================================================== */}
+
       <div className="last-update">
-        Last updated:{" "}
-        {new Date().toLocaleString()}
+        <span>
+          Data from{" "}
+          <strong>
+            {dataFromDate}
+          </strong>
+        </span>
+
+        <span>
+          {" "}
+          |{" "}
+        </span>
+
+        <span>
+          Last updated:{" "}
+          {new Date().toLocaleString()}
+        </span>
       </div>
+
+      {/* ========================================================
+          KPI CARDS
+      ======================================================== */}
 
       <section className="kpi-grid">
         {[
@@ -245,112 +500,183 @@ export function VendorDashboard() {
             "POs Outstanding",
             poMap.size,
             money(
-              [...poMap.values()].reduce(
-                (a, x) =>
+              [
+                ...poMap.values(),
+              ].reduce(
+                (
+                  a,
+                  x
+                ) =>
                   a +
-                  (x.poLineAmount || 0),
+                  (
+                    x.poLineAmount ||
+                    0
+                  ),
                 0
               )
             ),
             "po",
             "green",
           ],
+
           [
             "GRNs Available",
             grns.length,
             money(
               grns.reduce(
-                (a, x) =>
+                (
+                  a,
+                  x
+                ) =>
                   a +
-                  (x.grnReceivedQuantity ||
-                    0),
+                  (
+                    x.grnReceivedQuantity ||
+                    0
+                  ),
                 0
               )
             ),
             "grn",
             "blue",
           ],
+
           [
             "Invoices Submitted",
             invoices.length +
               pendingPortal.filter(
-                (x) =>
+                (
+                  x
+                ) =>
                   x.status !==
                   "DRAFT"
               ).length,
+
             money(
               totalInv +
                 pendingPortal.reduce(
-                  (a, x) =>
+                  (
+                    a,
+                    x
+                  ) =>
                     a +
                     x.invoiceAmount,
                   0
                 )
             ),
+
             "invoice",
             "purple",
           ],
+
           [
             "Invoices Paid",
             paid.length,
-            money(paidAmt),
+            money(
+              paidAmt
+            ),
             "payment",
             "teal",
           ],
+
           [
             "Invoices Returned",
             returned.length,
+
             money(
               returned.reduce(
-                (a, x) =>
+                (
+                  a,
+                  x
+                ) =>
                   a +
                   x.invoiceAmount,
                 0
               )
             ),
+
             "invoice",
             "orange",
           ],
+
           [
             "Invoices Cancelled",
             cancelled.length,
+
             money(
               cancelled.reduce(
-                (a, x) =>
+                (
+                  a,
+                  x
+                ) =>
                   a +
                   x.invoiceAmount,
                 0
               )
             ),
+
             "support",
             "red",
           ],
         ].map(
-          ([l, n, a, i, c]) => (
+          (
+            [
+              l,
+              n,
+              a,
+              i,
+              c,
+            ]
+          ) => (
             <div
               className={`kpi-v2 kpi-${c}`}
-              key={String(l)}
+              key={
+                String(
+                  l
+                )
+              }
             >
               <span
                 className={`kpi-round ${c}`}
               >
                 <Icon
-                  name={String(i)}
-                  size={20}
+                  name={
+                    String(
+                      i
+                    )
+                  }
+                  size={
+                    20
+                  }
                 />
               </span>
 
               <div className="kpi-copy">
-                <small>{l}</small>
-                <strong>{n}</strong>
-                <p>{a}</p>
+                <small>
+                  {l}
+                </small>
+
+                <strong>
+                  {n}
+                </strong>
+
+                <p>
+                  {a}
+                </p>
               </div>
             </div>
           )
         )}
       </section>
 
+      {/* ========================================================
+          TOP ROW
+      ======================================================== */}
+
       <section className="dashboard-row top-row">
+        {/* ======================================================
+            INVOICE STATUS OVERVIEW
+        ====================================================== */}
+
         <div className="panel invoice-overview">
           <h3>
             Invoice Status Overview
@@ -360,7 +686,9 @@ export function VendorDashboard() {
             <div className="donut">
               <div>
                 <strong>
-                  {invoices.length}
+                  {
+                    invoices.length
+                  }
                 </strong>
 
                 <span>
@@ -373,47 +701,80 @@ export function VendorDashboard() {
               {[
                 [
                   "Submitted",
-                  invoices.filter((x) =>
+
+                  invoices.filter(
                     (
-                      x.approvalStatus ||
-                      ""
-                    )
-                      .toUpperCase()
-                      .includes(
-                        "SUBMIT"
+                      x
+                    ) =>
+                      (
+                        x.approvalStatus ||
+                        ""
                       )
+                        .toUpperCase()
+                        .includes(
+                          "SUBMIT"
+                        )
                   ).length,
                 ],
+
                 [
                   "Pending Finance",
-                  invoices.filter((x) =>
+
+                  invoices.filter(
                     (
-                      x.approvalStatus ||
-                      ""
-                    )
-                      .toUpperCase()
-                      .includes("PEND")
+                      x
+                    ) =>
+                      (
+                        x.approvalStatus ||
+                        ""
+                      )
+                        .toUpperCase()
+                        .includes(
+                          "PEND"
+                        )
                   ).length,
                 ],
+
                 [
                   "Returned",
                   returned.length,
                 ],
+
                 [
                   "Paid",
                   paid.length,
                 ],
+
                 [
                   "Cancelled",
                   cancelled.length,
                 ],
-              ].map(([l, n]) => (
-                <li key={String(l)}>
-                  <i></i>
-                  <span>{l}</span>
-                  <b>{n}</b>
-                </li>
-              ))}
+              ].map(
+                (
+                  [
+                    l,
+                    n,
+                  ]
+                ) => (
+                  <li
+                    key={
+                      String(
+                        l
+                      )
+                    }
+                  >
+                    <i />
+
+                    <span>
+                      {l}
+                    </span>
+
+                    <b>
+                      {n}
+                    </b>
+                  </li>
+                )
+              )}
             </ul>
           </div>
 
@@ -422,11 +783,11 @@ export function VendorDashboard() {
           </Link>
         </div>
 
-        {/* =========================================
+        {/* ======================================================
             RECENT INVOICES
             Dashboard-only status display mapping:
             pending workflow statuses => Submitted
-        ========================================== */}
+        ====================================================== */}
 
         <div className="panel recent">
           <div className="panel-title">
@@ -466,67 +827,79 @@ export function VendorDashboard() {
 
             <tbody>
               {invoices
-                .slice(0, 5)
-                .map((x) => {
-                  const dashboardStatus =
-                    dashboardInvoiceStatus(
-                      x.approvalStatus
-                    );
+                .slice(
+                  0,
+                  5
+                )
+                .map(
+                  (
+                    x
+                  ) => {
+                    const dashboardStatus =
+                      dashboardInvoiceStatus(
+                        x.approvalStatus
+                      );
 
-                  return (
-                    <tr
-                      key={
-                        x.invoiceNumber
-                      }
-                    >
-                      <td>
-                        {
+                    return (
+                      <tr
+                        key={
                           x.invoiceNumber
                         }
-                      </td>
+                      >
+                        <td>
+                          {
+                            x.invoiceNumber
+                          }
+                        </td>
 
-                      <td>
-                        {formatDate(x.invoiceDate)}
-                      </td>
+                        <td>
+                          {formatDate(
+                            x.invoiceDate
+                          )}
+                        </td>
 
-                      <td>
-                        {Number(
-                          x.invoiceAmount
-                        ).toLocaleString()}
-                      </td>
+                        <td>
+                          {Number(
+                            x.invoiceAmount
+                          ).toLocaleString()}
+                        </td>
 
-                      <td>
-                        <span
-                          className={`status ${statusClass(
-                            dashboardStatus
-                          )}`}
-                        >
-                          {dashboardStatus}
-                        </span>
-                      </td>
+                        <td>
+                          <span
+                            className={`status ${statusClass(
+                              dashboardStatus
+                            )}`}
+                          >
+                            {
+                              dashboardStatus
+                            }
+                          </span>
+                        </td>
 
-                      <td>
-                        <span
-                          className={`status ${statusClass(
-                            x.paymentStatus
-                          )}`}
-                        >
-                          {x.paymentStatus ||
-                            "Pending"}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
+                        <td>
+                          <span
+                            className={`status ${statusClass(
+                              x.paymentStatus
+                            )}`}
+                          >
+                            {x.paymentStatus ||
+                              "Pending"}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  }
+                )}
 
               {!invoices.length && (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={
+                      5
+                    }
                     className="empty"
                   >
-                    No Oracle invoice
-                    activity yet.
+                    No Oracle invoice activity yet.
                   </td>
                 </tr>
               )}
@@ -535,7 +908,15 @@ export function VendorDashboard() {
         </div>
       </section>
 
+      {/* ========================================================
+          PURCHASE ORDERS / GRNS / CREATE INVOICE
+      ======================================================== */}
+
       <section className="dashboard-row triple">
+        {/* ======================================================
+            PURCHASE ORDERS
+        ====================================================== */}
+
         <div className="panel">
           <div className="panel-title">
             <h3>
@@ -569,45 +950,62 @@ export function VendorDashboard() {
             </thead>
 
             <tbody>
-              {[...poMap.values()]
-                .slice(0, 5)
-                .map((x) => (
-                  <tr
-                    key={x.poNumber}
-                  >
-                    <td>
-                      {x.poNumber}
-                    </td>
+              {[
+                ...poMap.values(),
+              ]
+                .slice(
+                  0,
+                  5
+                )
+                .map(
+                  (
+                    x
+                  ) => (
+                    <tr
+                      key={
+                        x.poNumber
+                      }
+                    >
+                      <td>
+                        {
+                          x.poNumber
+                        }
+                      </td>
 
-                    <td>
-                      <span
-                        className={`status ${statusClass(
-                          x.poStatus
-                        )}`}
-                      >
-                        {x.poStatus ||
-                          "Open"}
-                      </span>
-                    </td>
+                      <td>
+                        <span
+                          className={`status ${statusClass(
+                            x.poStatus
+                          )}`}
+                        >
+                          {x.poStatus ||
+                            "Open"}
+                        </span>
+                      </td>
 
-                    <td>
-                      {Number(
-                        x.poLineAmount ||
-                          0
-                      ).toLocaleString()}
-                    </td>
+                      <td>
+                        {Number(
+                          x.poLineAmount ||
+                            0
+                        ).toLocaleString()}
+                      </td>
 
-                    <td>
-                      {Number(
-                        x.quantityAvailableToInvoice ||
-                          0
-                      ).toLocaleString()}
-                    </td>
-                  </tr>
-                ))}
+                      <td>
+                        {Number(
+                          x.quantityAvailableToInvoice ||
+                            0
+                        ).toLocaleString()}
+                      </td>
+                    </tr>
+                  )
+                )}
             </tbody>
           </table>
         </div>
+
+        {/* ======================================================
+            GRNS
+        ====================================================== */}
 
         <div className="panel">
           <div className="panel-title">
@@ -643,7 +1041,10 @@ export function VendorDashboard() {
 
             <tbody>
               {grns
-                .slice(0, 5)
+                .slice(
+                  0,
+                  5
+                )
                 .map(
                   (
                     x,
@@ -690,6 +1091,10 @@ export function VendorDashboard() {
           </table>
         </div>
 
+        {/* ======================================================
+            CREATE INVOICE
+        ====================================================== */}
+
         <div className="panel create-card">
           <div className="doc-plus">
             ＋
@@ -714,7 +1119,15 @@ export function VendorDashboard() {
         </div>
       </section>
 
+      {/* ========================================================
+          PAYMENTS / PROFILE
+      ======================================================== */}
+
       <section className="dashboard-row bottom-row">
+        {/* ======================================================
+            PAYMENTS
+        ====================================================== */}
+
         <div className="panel">
           <div className="panel-title">
             <h3>
@@ -733,7 +1146,9 @@ export function VendorDashboard() {
               </small>
 
               <b>
-                {money(paidAmt)}
+                {money(
+                  paidAmt
+                )}
               </b>
             </div>
 
@@ -745,10 +1160,15 @@ export function VendorDashboard() {
               <b>
                 {money(
                   invoices.reduce(
-                    (a, x) =>
+                    (
+                      a,
+                      x
+                    ) =>
                       a +
-                      (x.outstandingAmount ||
-                        0),
+                      (
+                        x.outstandingAmount ||
+                        0
+                      ),
                     0
                   )
                 )}
@@ -779,47 +1199,58 @@ export function VendorDashboard() {
 
             <tbody>
               {invoices
-                .slice(0, 5)
-                .map((x) => (
-                  <tr
-                    key={
-                      x.invoiceNumber
-                    }
-                  >
-                    <td>
-                      {
+                .slice(
+                  0,
+                  5
+                )
+                .map(
+                  (
+                    x
+                  ) => (
+                    <tr
+                      key={
                         x.invoiceNumber
                       }
-                    </td>
+                    >
+                      <td>
+                        {
+                          x.invoiceNumber
+                        }
+                      </td>
 
-                    <td>
-                      {Number(
-                        x.invoiceAmount
-                      ).toLocaleString()}
-                    </td>
+                      <td>
+                        {Number(
+                          x.invoiceAmount
+                        ).toLocaleString()}
+                      </td>
 
-                    <td>
-                      {Number(
-                        x.amountPaid ||
-                          0
-                      ).toLocaleString()}
-                    </td>
+                      <td>
+                        {Number(
+                          x.amountPaid ||
+                            0
+                        ).toLocaleString()}
+                      </td>
 
-                    <td>
-                      <span
-                        className={`status ${statusClass(
-                          x.paymentStatus
-                        )}`}
-                      >
-                        {x.paymentStatus ||
-                          "Pending"}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                      <td>
+                        <span
+                          className={`status ${statusClass(
+                            x.paymentStatus
+                          )}`}
+                        >
+                          {x.paymentStatus ||
+                            "Pending"}
+                        </span>
+                      </td>
+                    </tr>
+                  )
+                )}
             </tbody>
           </table>
         </div>
+
+        {/* ======================================================
+            VENDOR PROFILE
+        ====================================================== */}
 
         <div className="panel profile-card">
           <h3>
@@ -830,6 +1261,7 @@ export function VendorDashboard() {
             <dt>
               Company
             </dt>
+
             <dd>
               {supplier?.vendorName ||
                 "-"}
@@ -838,6 +1270,7 @@ export function VendorDashboard() {
             <dt>
               Supplier #
             </dt>
+
             <dd>
               {supplier?.supplierNumber ||
                 "-"}
@@ -846,6 +1279,7 @@ export function VendorDashboard() {
             <dt>
               Vendor ID
             </dt>
+
             <dd>
               {supplier?.vendorId ||
                 "-"}
@@ -854,6 +1288,7 @@ export function VendorDashboard() {
             <dt>
               Site
             </dt>
+
             <dd>
               {supplier?.vendorSiteCode ||
                 "-"}
@@ -862,6 +1297,7 @@ export function VendorDashboard() {
             <dt>
               Status
             </dt>
+
             <dd>
               Active
             </dd>

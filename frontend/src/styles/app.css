@@ -5105,3 +5105,645 @@ td {
     flex-direction: column;
   }
 }
+
+/* ============================================================
+   MOBILE RESPONSIVE PORTAL LAYOUT
+   ============================================================ */
+
+.mobile-menu-toggle,
+.mobile-sidebar-backdrop {
+  display: none;
+}
+
+.portal-topbar-left {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.portal-topbar-title {
+  min-width: 0;
+}
+
+@media (max-width: 1000px) {
+  .support-grid,
+  .upload-grid,
+  .admin-bottom-grid,
+  .role-grid,
+  .dashboard-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .verified-vendor-card,
+  .vendor-detail-grid,
+  .invoice-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 760px) {
+  html,
+  body,
+  #root {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .portal-shell.sidebar-pinned-closed,
+  .portal-shell.sidebar-pinned-open {
+    display: block;
+    min-height: 100vh;
+  }
+
+  .portal-main {
+    width: 100%;
+    min-width: 0;
+    padding: 0 12px 22px;
+    margin: 0;
+  }
+
+  .portal-topbar {
+    min-height: 66px;
+    height: auto;
+    margin: 0 -12px 10px;
+    padding: 10px 12px;
+    gap: 10px;
+    z-index: 40;
+  }
+
+  .portal-topbar-left {
+    flex: 1 1 auto;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .portal-topbar-title h1 {
+    margin: 0 0 3px;
+    font-size: 16px;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .portal-topbar-title p {
+    max-width: 42vw;
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-menu-toggle {
+    width: 40px;
+    height: 40px;
+    flex: 0 0 40px;
+    padding: 9px;
+    border: 1px solid #dfe7e2;
+    border-radius: 9px;
+    background: #fff;
+    color: #203128;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    cursor: pointer;
+  }
+
+  .mobile-menu-toggle span {
+    width: 18px;
+    height: 2px;
+    border-radius: 2px;
+    background: currentColor;
+    display: block;
+  }
+
+  .mobile-menu-toggle:hover,
+  .mobile-menu-toggle:focus-visible {
+    background: #edf8f2;
+    color: var(--brand-green-text);
+    border-color: #b9ddc7;
+  }
+
+  .portal-sidebar,
+  .portal-sidebar.collapsed,
+  .portal-sidebar.expanded {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(82vw, 300px);
+    height: 100dvh;
+    padding: 16px 12px;
+    background: #fff;
+    border-right: 1px solid #dfe7e2;
+    box-shadow: 12px 0 34px rgba(20, 48, 33, 0.16);
+    overflow-y: auto;
+    overflow-x: hidden;
+    z-index: 70;
+    transform: translateX(-105%);
+    transition: transform 180ms ease;
+  }
+
+  .portal-sidebar.mobile-open,
+  .portal-sidebar.mobile-open.collapsed,
+  .portal-sidebar.mobile-open.expanded {
+    transform: translateX(0);
+  }
+
+  .portal-sidebar .pc-brand,
+  .portal-sidebar.collapsed .pc-brand,
+  .portal-sidebar.expanded .pc-brand {
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 2px 8px 18px;
+  }
+
+  .portal-sidebar .pc-brand > div,
+  .portal-sidebar.collapsed .pc-brand > div,
+  .portal-sidebar.expanded .pc-brand > div,
+  .portal-sidebar .side-link > span,
+  .portal-sidebar.collapsed .side-link > span,
+  .portal-sidebar.expanded .side-link > span {
+    width: auto;
+    max-width: 190px;
+    opacity: 1;
+    overflow: visible;
+    pointer-events: auto;
+  }
+
+  .portal-sidebar nav,
+  .portal-sidebar.collapsed nav,
+  .portal-sidebar.expanded nav {
+    align-items: stretch;
+  }
+
+  .portal-sidebar .side-link,
+  .portal-sidebar.collapsed .side-link,
+  .portal-sidebar.expanded .side-link {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 44px;
+    padding: 10px 11px;
+    gap: 11px;
+    justify-content: flex-start;
+  }
+
+  .portal-sidebar .side-logout,
+  .portal-sidebar.collapsed .side-logout,
+  .portal-sidebar.expanded .side-logout {
+    width: 100%;
+    align-self: stretch;
+  }
+
+  .sidebar-toggle {
+    display: none !important;
+  }
+
+  .mobile-sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: block;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: rgba(11, 31, 21, 0.38);
+    cursor: default;
+  }
+
+  .top-actions {
+    flex: 0 0 auto;
+    gap: 5px;
+  }
+
+  .role-pill {
+    display: none;
+  }
+
+  .bell-btn {
+    width: 38px;
+    height: 38px;
+    padding: 7px;
+  }
+
+  .user-chip {
+    gap: 0;
+  }
+
+  .user-chip > strong {
+    display: none;
+  }
+
+  .user-chip span {
+    width: 34px;
+    height: 34px;
+  }
+
+  .notification-popup {
+    position: fixed;
+    top: 68px;
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-width: none;
+    max-height: calc(100dvh - 82px);
+  }
+
+  .notification-popup-body {
+    max-height: calc(100dvh - 210px);
+  }
+
+  .vendor-profile-popup {
+    position: fixed !important;
+    top: 68px !important;
+    left: 10px !important;
+    right: 10px !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: calc(100dvh - 82px);
+    overflow-y: auto;
+  }
+
+  .kpi-grid,
+  .internal-kpis,
+  .finance-dashboard .role-kpis,
+  .supply-dashboard .role-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .dashboard-row,
+  .dashboard-row.triple,
+  .dashboard-row.bottom-row,
+  .dashboard-grid,
+  .admin-bottom-grid,
+  .role-grid,
+  .support-grid,
+  .upload-grid,
+  .invoice-upload-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .panel,
+  .page-card {
+    min-width: 0;
+    padding: 13px;
+    border-radius: 9px;
+  }
+
+  .page-card-head,
+  .panel-title,
+  .vendor-access-page-header,
+  .vendor-table-head,
+  .invoice-history-actions,
+  .notification-page-actions,
+  .date-filter-actions {
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .overview-body {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .overview-body .donut {
+    align-self: center;
+  }
+
+  .form-grid,
+  .vendor-access-form,
+  .verified-vendor-card,
+  .vendor-detail-grid,
+  .invoice-detail-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .form-grid input,
+  .form-grid select,
+  .signup-form input,
+  .auth-panel input,
+  .vendor-access-form input,
+  .vendor-access-form select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .form-actions {
+    flex-wrap: wrap;
+  }
+
+  .form-actions > button,
+  .form-actions > a {
+    flex: 1 1 150px;
+  }
+
+  .mini-kpis {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .profile-card dl,
+  .profile-page dl {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .profile-card dd,
+  .profile-page dd {
+    margin: 0 0 10px;
+  }
+
+  .grn-choice {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .grn-choice > :last-child {
+    grid-column: 2;
+  }
+
+  .table-wrap,
+  .table-container,
+  .po-table-scroll,
+  .supply-records-table-wrap,
+  .vendor-access-table-wrap,
+  .page-card,
+  .panel {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  table,
+  .data-table,
+  .role-table,
+  .compact-table,
+  .vendor-access-table,
+  .vendor-data-table,
+  .po-summary-table {
+    min-width: 680px;
+  }
+
+  th,
+  td {
+    white-space: nowrap;
+  }
+
+  td p,
+  td div,
+  td span {
+    white-space: normal;
+  }
+
+  .data-toolbar,
+  .role-filters,
+  .supply-records-filters {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .data-toolbar-search,
+  .data-toolbar-select,
+  .data-toolbar input,
+  .data-toolbar select,
+  .role-filters input,
+  .role-filters select,
+  .supply-records-filters input,
+  .supply-records-filters select {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .invoice-detail-modal,
+  .vendor-delete-modal {
+    width: calc(100vw - 20px) !important;
+    max-width: calc(100vw - 20px) !important;
+    max-height: calc(100dvh - 20px) !important;
+    margin: 10px;
+    overflow-y: auto;
+  }
+
+  .invoice-detail-modal-head {
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .invoice-detail-document-actions,
+  .notification-row-actions,
+  .vendor-delete-actions,
+  .vendor-contact-edit-actions,
+  .role-actions {
+    flex-wrap: wrap;
+  }
+
+  .login-page,
+  .auth-page {
+    padding: 14px;
+    align-items: flex-start;
+  }
+
+  .login-card,
+  .auth-card {
+    width: 100%;
+    min-height: 0;
+    grid-template-columns: 1fr !important;
+    border-radius: 16px;
+  }
+
+  .login-brand-panel,
+  .auth-brand {
+    min-height: auto;
+    padding: 24px 20px;
+  }
+
+  .auth-panel,
+  .login-form-panel {
+    padding: 28px 20px !important;
+  }
+
+  .signup-card,
+  .set-password-card,
+  .password-setup-card,
+  .otp-card {
+    width: 100%;
+    max-width: 100%;
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+
+  .signup-head {
+    align-items: flex-start;
+  }
+
+  .stepper {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .portal-main {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .portal-topbar {
+    margin-left: -10px;
+    margin-right: -10px;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .portal-topbar-title p {
+    display: none;
+  }
+
+  .portal-topbar-title h1 {
+    max-width: 48vw;
+    font-size: 15px;
+  }
+
+  .kpi-grid,
+  .internal-kpis,
+  .finance-dashboard .role-kpis,
+  .supply-dashboard .role-kpis,
+  .mini-kpis {
+    grid-template-columns: 1fr !important;
+  }
+
+  .kpi-v2 {
+    min-height: 78px;
+    padding: 12px;
+  }
+
+  .page-card,
+  .panel {
+    padding: 11px;
+  }
+
+  .page-card-head,
+  .panel-title {
+    align-items: flex-start;
+  }
+
+  .form-actions {
+    flex-direction: column;
+  }
+
+  .form-actions > button,
+  .form-actions > a,
+  .primary-btn,
+  .secondary-btn {
+    width: 100%;
+  }
+
+  .notification-popup-header {
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .notification-mark-read {
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+
+  .notification-item {
+    padding: 11px 12px;
+  }
+
+  table,
+  .data-table,
+  .role-table,
+  .compact-table,
+  .vendor-access-table,
+  .vendor-data-table,
+  .po-summary-table {
+    min-width: 620px;
+  }
+}
+
+/* ============================================================
+   ADMIN DASHBOARD - MOBILE KPI GRID FIX
+   Keeps the four admin KPI cards inside the viewport.
+   361px-760px: 2 x 2 grid
+   <=360px: single column fallback
+   ============================================================ */
+@media (max-width: 760px) {
+  .admin-role-dashboard {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
+  }
+
+  .admin-role-dashboard .role-kpis {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+  }
+
+  .admin-role-dashboard .role-kpi,
+  .admin-role-dashboard .admin-kpi-card {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    min-height: 112px;
+    padding: 12px 10px;
+    gap: 9px;
+    overflow: hidden;
+  }
+
+  .admin-role-dashboard .role-kpi > div {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .admin-role-dashboard .role-kpi-icon {
+    width: 42px;
+    height: 42px;
+    flex: 0 0 42px;
+  }
+
+  .admin-role-dashboard .role-kpi small {
+    font-size: 10px;
+    line-height: 1.25;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .admin-role-dashboard .role-kpi strong {
+    margin: 5px 0 0;
+    font-size: 23px;
+    line-height: 1.05;
+    white-space: nowrap;
+  }
+
+  .admin-role-dashboard .admin-analytics-grid,
+  .admin-role-dashboard .admin-bottom-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 360px) {
+  .admin-role-dashboard .role-kpis {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .admin-role-dashboard .role-kpi,
+  .admin-role-dashboard .admin-kpi-card {
+    min-height: 88px;
+    padding: 12px 14px;
+  }
+}
