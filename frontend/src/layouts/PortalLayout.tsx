@@ -118,43 +118,12 @@ export function PortalLayout() {
       OracleSupplier | null
     >(null);
 
-  const [
-    sidebarPinnedOpen,
-    setSidebarPinnedOpen,
-  ] =
-    useState(
-      () =>
-        window.localStorage.getItem(
-          "portal-sidebar-pinned"
-        ) === "true"
-    );
+  const notificationPinnedRef = useRef(false);
+  const profilePinnedRef = useRef(false);
 
-  const [
-    sidebarHovered,
-    setSidebarHovered,
-  ] =
-    useState(false);
-
-  const [
-    mobileSidebarOpen,
-    setMobileSidebarOpen,
-  ] =
-    useState(false);
-
-  const sidebarExpanded =
-    sidebarPinnedOpen ||
-    sidebarHovered;
-
-  useEffect(() => {
-    window.localStorage.setItem(
-      "portal-sidebar-pinned",
-      sidebarPinnedOpen
-        ? "true"
-        : "false"
-    );
-  }, [
-    sidebarPinnedOpen,
-  ]);
+  const [sidebarHovered, setSidebarHovered] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const sidebarExpanded = sidebarHovered || mobileSidebarOpen;
 
   useEffect(() => {
     setMobileSidebarOpen(
@@ -276,6 +245,7 @@ export function PortalLayout() {
             event.target as Node
           )
         ) {
+          notificationPinnedRef.current = false;
           setNotificationOpen(
             false
           );
@@ -287,6 +257,7 @@ export function PortalLayout() {
             event.target as Node
           )
         ) {
+          profilePinnedRef.current = false;
           setProfileOpen(
             false
           );
@@ -302,6 +273,8 @@ export function PortalLayout() {
           event.key ===
           "Escape"
         ) {
+          notificationPinnedRef.current = false;
+          profilePinnedRef.current = false;
           setNotificationOpen(
             false
           );
@@ -644,21 +617,18 @@ export function PortalLayout() {
       }
     };
 
-  const handleNotificationClick =
-    async () => {
-      const nextState =
-        !notificationOpen;
-
-      setNotificationOpen(
-        nextState
-      );
-
-      if (
-        nextState
-      ) {
-        await loadNotifications();
-      }
-    };
+  const handleNotificationClick = () => {
+    if (notificationPinnedRef.current) {
+      notificationPinnedRef.current = false;
+      setNotificationOpen(false);
+      return;
+    }
+    notificationPinnedRef.current = true;
+    profilePinnedRef.current = false;
+    setProfileOpen(false);
+    if (!notificationOpen) void loadNotifications();
+    setNotificationOpen(true);
+  };
 
   const markNotificationRead =
     async (
@@ -771,28 +741,10 @@ export function PortalLayout() {
   // PROFILE
   // ============================================================
 
-  const handleProfileClick =
-    async () => {
+  const loadProfileIfNeeded = async () => {
       if (
-        !isVendor
-      ) {
-        return;
-      }
-
-      const nextState =
-        !profileOpen;
-
-      setProfileOpen(
-        nextState
-      );
-
-      setNotificationOpen(
-        false
-      );
-
-      if (
-        nextState &&
-        !supplier
+        !supplier &&
+        !profileLoading
       ) {
         try {
           setProfileLoading(
@@ -815,7 +767,45 @@ export function PortalLayout() {
           );
         }
       }
-    };
+  };
+
+  const handleProfileClick = () => {
+    if (!isVendor) return;
+    if (profilePinnedRef.current) {
+      profilePinnedRef.current = false;
+      setProfileOpen(false);
+      return;
+    }
+    profilePinnedRef.current = true;
+    notificationPinnedRef.current = false;
+    setNotificationOpen(false);
+    setProfileOpen(true);
+    if (!profileOpen) void loadProfileIfNeeded();
+  };
+
+  const openNotificationsOnHover = () => {
+    if (notificationOpen) return;
+    profilePinnedRef.current = false;
+    setProfileOpen(false);
+    setNotificationOpen(true);
+    void loadNotifications();
+  };
+
+  const openProfileOnHover = () => {
+    if (!isVendor || profileOpen) return;
+    notificationPinnedRef.current = false;
+    setNotificationOpen(false);
+    setProfileOpen(true);
+    void loadProfileIfNeeded();
+  };
+
+  const closeNotificationsOnLeave = () => {
+    if (!notificationPinnedRef.current) setNotificationOpen(false);
+  };
+
+  const closeProfileOnLeave = () => {
+    if (!profilePinnedRef.current) setProfileOpen(false);
+  };
 
   // ============================================================
   // RENDER
@@ -823,86 +813,13 @@ export function PortalLayout() {
 
   return (
     <div
-      className={`portal-shell ${
-        sidebarPinnedOpen
-          ? "sidebar-pinned-open"
-          : "sidebar-pinned-closed"
-      } ${
-        mobileSidebarOpen
-          ? "mobile-menu-open"
-          : ""
-      }`}
+      className={`portal-shell ${sidebarHovered ? "sidebar-pinned-open" : "sidebar-pinned-closed"} ${mobileSidebarOpen ? "mobile-menu-open" : ""}`}
     >
       <aside
-        className={`portal-sidebar ${
-          sidebarExpanded
-            ? "expanded"
-            : "collapsed"
-        } ${
-          mobileSidebarOpen
-            ? "mobile-open"
-            : ""
-        }`}
-        onMouseEnter={() =>
-          setSidebarHovered(
-            true
-          )
-        }
-        onMouseLeave={() =>
-          setSidebarHovered(
-            false
-          )
-        }
+        className={`portal-sidebar ${sidebarExpanded ? "expanded" : "collapsed"} ${mobileSidebarOpen ? "mobile-open" : ""}`}
+        onMouseEnter={() => setSidebarHovered(true)}
+        onMouseLeave={() => setSidebarHovered(false)}
       >
-        <button
-          type="button"
-          className="sidebar-toggle"
-          onClick={() =>
-            setSidebarPinnedOpen(
-              (
-                current
-              ) =>
-                !current
-            )
-          }
-          aria-label={
-            sidebarPinnedOpen
-              ? "Collapse sidebar"
-              : "Keep sidebar open"
-          }
-          title={
-            sidebarPinnedOpen
-              ? "Collapse sidebar"
-              : "Keep sidebar open"
-          }
-        >
-          <svg
-            className="sidebar-toggle-icon"
-            viewBox="0 0 24 24"
-            aria-hidden="true"
-            focusable="false"
-          >
-            <rect
-              x="3"
-              y="4"
-              width="18"
-              height="16"
-              rx="3"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-            />
-
-            <path
-              d="M9 4v16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-            />
-          </svg>
-        </button>
-
         <div className="pc-brand">
           <img
             src="/pakistan-cables-logo.png"
@@ -920,7 +837,7 @@ export function PortalLayout() {
           </div>
         </div>
 
-        <nav>
+        <nav aria-label="Portal navigation">
           {items.map(
             ([
               to,
@@ -1069,6 +986,8 @@ export function PortalLayout() {
 
             <div
               className="notification-wrapper"
+              onMouseEnter={openNotificationsOnHover}
+              onMouseLeave={closeNotificationsOnLeave}
               ref={
                 notificationRef
               }
@@ -1215,6 +1134,8 @@ export function PortalLayout() {
             {isVendor ? (
               <div
                 className="vendor-profile-wrapper"
+                onMouseEnter={openProfileOnHover}
+                onMouseLeave={closeProfileOnLeave}
                 ref={
                   profileRef
                 }
@@ -1337,6 +1258,18 @@ export function PortalLayout() {
                         </dd>
                       </dl>
                     )}
+                    <button
+                      type="button"
+                      className="vendor-profile-logout"
+                      onClick={() => {
+                        setProfileOpen(false);
+                        logout();
+                        navigate("/login");
+                      }}
+                    >
+                      <Icon name="logout" />
+                      <span>Logout</span>
+                    </button>
                   </div>
                 )}
               </div>

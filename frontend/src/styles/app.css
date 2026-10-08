@@ -5747,3 +5747,404 @@ td {
     padding: 12px 14px;
   }
 }
+
+/* =========================================================
+   REDESIGN OVERRIDES (sidebar only). Loaded after app.css.
+   To revert: remove the import in main.tsx.
+========================================================= */
+:root{--rd-g:#00843d;--rd-g2:#006b32;--rd-tint:#e6f4ec;--rd-bd:#e4e9e6;--rd-hv:#f1f7f3}
+
+/* ---------- SIDEBAR ---------- */
+.portal-sidebar{padding:18px 14px!important;background:#fff}
+.portal-sidebar .pc-brand{padding:4px 6px 18px!important;margin-bottom:6px;border-bottom:1px solid var(--rd-bd)}
+.portal-sidebar .pc-brand img{border-radius:50%;box-shadow:0 0 0 4px var(--rd-tint)}
+.portal-sidebar .pc-brand strong{font-size:16px!important;font-weight:800}
+.portal-sidebar .pc-brand span{font-size:11px!important;color:#667085}
+.portal-sidebar nav{gap:6px!important;padding-top:12px!important}
+.portal-sidebar .side-link{font-size:14px!important;font-weight:600;padding:7px 9px!important;border-radius:14px!important;gap:12px!important;transition:background .2s,color .2s,transform .2s,box-shadow .2s!important}
+.portal-sidebar .side-link svg{box-sizing:content-box;width:20px;height:20px;padding:8px;border-radius:11px;background:var(--rd-hv);color:#667085;flex:none;transition:.2s}
+.portal-sidebar .side-link:hover:not(.active){background:var(--rd-hv)!important;transform:translateX(3px)}
+.portal-sidebar .side-link:hover:not(.active) svg{background:var(--rd-tint);color:var(--rd-g)}
+.portal-sidebar .side-link.active{background:linear-gradient(135deg,#00a04a,#00843d 60%,#006b32)!important;box-shadow:0 8px 20px rgba(0,132,61,.32)}
+.portal-sidebar .side-link.active svg{background:rgba(255,255,255,.2);color:#fff}
+.portal-sidebar .side-logout{margin-top:0!important}
+.portal-sidebar .side-logout:hover{background:#fdecec!important;color:#d92d20;transform:none!important}
+.portal-sidebar .side-logout:hover svg{background:#fbd5d1!important;color:#d92d20!important}
+.portal-sidebar nav{flex:1}
+.side-profile{display:flex;align-items:center;gap:11px;padding:12px;border-radius:16px;background:var(--rd-hv);border:1px solid var(--rd-bd);margin:10px 0;overflow:hidden;white-space:nowrap}
+.side-avatar{width:38px;height:38px;border-radius:50%;flex:none;display:grid;place-items:center;font-weight:800;font-size:13px;color:#fff;background:linear-gradient(135deg,#17a85a,#006b32)}
+.side-profile div{line-height:1.25;min-width:0;transition:opacity .15s,max-width .2s}
+.side-profile strong{display:block;font-size:13px;overflow:hidden;text-overflow:ellipsis;max-width:150px}
+.side-profile small{font-size:11.5px;color:#667085}
+.portal-sidebar.collapsed .side-profile{justify-content:center;padding:8px 0;background:transparent;border-color:transparent}
+.portal-sidebar.collapsed .side-profile div{width:0;max-width:0;opacity:0;overflow:hidden}
+@media (min-width:761px){
+ .portal-shell.sidebar-pinned-open{grid-template-columns:268px minmax(0,1fr)}
+ .portal-shell.sidebar-pinned-closed{grid-template-columns:84px minmax(0,1fr)}
+ .portal-sidebar.expanded{width:268px}
+ .portal-sidebar.collapsed{width:84px}
+ .portal-sidebar.expanded .pc-brand>div,.portal-sidebar.expanded .side-link>span{max-width:190px}
+ .portal-sidebar.collapsed .side-link{width:52px;min-width:52px;height:52px;padding:0!important;border-radius:16px!important}
+ .portal-sidebar.collapsed .side-link svg{padding:8px}
+ .sidebar-toggle{top:74px;right:-14px;background:#fff!important;border:1px solid var(--rd-bd)!important;box-shadow:0 2px 8px rgba(0,60,30,.1)!important;border-radius:9px!important}
+}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+
+/* =========================================================
+   VENDOR SIDEBAR - CLICK-ONLY EXPAND/COLLAPSE
+   Prevent dashboard overlap by matching grid and sidebar widths.
+   ========================================================= */
+.sidebar-menu-heading {
+  display: block;
+  padding: 14px 14px 7px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: #718096;
+}
+@media (min-width: 761px) {
+  .portal-shell.sidebar-pinned-open {
+    grid-template-columns: 320px minmax(0, 1fr) !important;
+  }
+  .portal-shell.sidebar-pinned-closed {
+    grid-template-columns: 96px minmax(0, 1fr) !important;
+  }
+  .portal-sidebar.expanded {
+    width: 320px !important;
+  }
+  .portal-sidebar.collapsed {
+    width: 96px !important;
+  }
+  .portal-sidebar {
+    min-width: 0;
+    box-sizing: border-box;
+    box-shadow: none !important;
+    border-right: 1px solid #e6ece8;
+  }
+  .portal-main {
+    min-width: 0;
+    margin-left: 0 !important;
+  }
+  .portal-sidebar.expanded .pc-brand {
+    padding-right: 40px !important;
+  }
+  .portal-sidebar.expanded .pc-brand > div,
+  .portal-sidebar.expanded .side-link > span {
+    max-width: 225px !important;
+  }
+  .portal-sidebar .sidebar-toggle {
+    right: 16px !important;
+    top: 34px !important;
+    width: 36px;
+    height: 36px;
+    z-index: 8;
+    border-radius: 12px !important;
+  }
+  .portal-sidebar.collapsed .sidebar-toggle {
+    position: static;
+    align-self: center;
+    margin: 8px auto 12px;
+    order: 1;
+  }
+  .portal-sidebar.collapsed .pc-brand { order: 0; }
+  .portal-sidebar.collapsed nav { order: 2; }
+  .portal-sidebar.collapsed .side-profile { order: 3; }
+  .portal-sidebar.collapsed .side-logout { order: 4; }
+  .portal-sidebar.collapsed .sidebar-menu-heading {
+    font-size: 0;
+    padding: 10px 0;
+    border-top: 1px solid #e6ece8;
+    width: 52px;
+    margin: 0 auto;
+  }
+  .portal-sidebar.collapsed .sidebar-menu-heading::after {
+    content: "";
+    display: block;
+    width: 28px;
+    border-top: 1px solid #e6ece8;
+    margin: auto;
+  }
+  .portal-sidebar.expanded .side-link {
+    min-height: 52px;
+    padding: 8px 12px !important;
+  }
+  .portal-sidebar.collapsed .side-link {
+    width: 56px;
+    min-width: 56px;
+    height: 56px;
+  }
+  .portal-sidebar.collapsed .side-link > span,
+  .portal-sidebar.collapsed .pc-brand > div {
+    display: none !important;
+  }
+  .portal-sidebar.collapsed .side-profile div { display: none; }
+  .portal-sidebar.collapsed .side-profile { margin-top: auto; }
+  .portal-sidebar.expanded .side-profile { margin-top: auto; }
+  .portal-sidebar .side-logout { margin-bottom: 8px; }
+  .portal-sidebar .side-link.active {
+    color: #fff;
+  }
+}
+@media (max-width: 760px) {
+  .sidebar-menu-heading { padding: 10px 14px 7px; }
+  .portal-sidebar .sidebar-toggle { display: none !important; }
+}
+
+/* FINAL: compact hover sidebar; dashboard always occupies its own grid column */
+@media (min-width: 761px) {
+  .portal-shell.sidebar-pinned-closed { grid-template-columns: 76px minmax(0, 1fr) !important; }
+  .portal-shell.sidebar-pinned-open { grid-template-columns: 260px minmax(0, 1fr) !important; }
+  .portal-sidebar.collapsed { width: 76px !important; }
+  .portal-sidebar.expanded { width: 260px !important; }
+  .portal-sidebar { position: relative !important; left: auto !important; transform: none !important; min-width: 0; overflow: hidden; }
+  .portal-main { min-width: 0; margin-left: 0 !important; }
+  .portal-sidebar .sidebar-toggle, .portal-sidebar .side-profile { display: none !important; }
+  .portal-sidebar.collapsed .side-link { width: 48px !important; min-width: 48px !important; height: 48px !important; }
+  .portal-sidebar.collapsed .pc-brand { justify-content: center; }
+  .portal-sidebar.expanded .pc-brand { padding-right: 6px !important; }
+  .portal-sidebar.expanded .side-link > span { max-width: 175px !important; }
+  .portal-sidebar .side-logout { margin-top: auto !important; }
+}
+@media (max-width: 760px) {
+  .portal-sidebar .sidebar-toggle, .portal-sidebar .side-profile { display: none !important; }
+  .portal-sidebar.mobile-open { width: min(280px, 85vw) !important; }
+}
+
+/* Sidebar final corrections: keep logout visible and remove collapsed divider */
+@media (min-width: 761px) {
+  .portal-sidebar {
+    height: 100vh !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+  }
+  .portal-sidebar nav {
+    flex: 0 0 auto !important;
+    min-height: 0 !important;
+  }
+  .portal-sidebar .side-logout {
+    display: flex !important;
+    visibility: visible !important;
+    flex: 0 0 auto !important;
+    margin-top: auto !important;
+    margin-bottom: 8px !important;
+  }
+  .portal-sidebar.collapsed .side-logout {
+    width: 48px !important;
+    min-width: 48px !important;
+    height: 48px !important;
+    align-self: center !important;
+    justify-content: center !important;
+    padding: 0 !important;
+  }
+  .portal-sidebar.collapsed .sidebar-menu-heading {
+    display: none !important;
+    border: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    height: 0 !important;
+  }
+  .portal-sidebar.collapsed .sidebar-menu-heading::before,
+  .portal-sidebar.collapsed .sidebar-menu-heading::after {
+    content: none !important;
+    display: none !important;
+    border: 0 !important;
+  }
+}
+
+
+/* =========================================================
+   08 OCT 2026 - FIXED HOVER SIDEBAR / SCROLL-SAFE LAYOUT
+   Overrides older conflicting sidebar declarations above.
+   ========================================================= */
+@media (min-width: 761px) {
+  .portal-shell,
+  .portal-shell.sidebar-pinned-open,
+  .portal-shell.sidebar-pinned-closed {
+    display: grid !important;
+    grid-template-columns: 76px minmax(0, 1fr) !important;
+    min-height: 100vh;
+    min-height: 100dvh;
+    transition: grid-template-columns 180ms ease;
+  }
+  .portal-shell.sidebar-pinned-open {
+    grid-template-columns: 260px minmax(0, 1fr) !important;
+  }
+  .portal-shell > .portal-sidebar {
+    position: fixed !important;
+    inset: 0 auto 0 0 !important;
+    z-index: 30 !important;
+    box-sizing: border-box !important;
+    width: 76px !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    padding: 14px 9px !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    background: #fff !important;
+    border-right: 1px solid #e6ece8 !important;
+    transition: width 180ms ease;
+  }
+  .portal-shell > .portal-sidebar.expanded {
+    width: 260px !important;
+    padding-inline: 12px !important;
+  }
+  .portal-shell > .portal-main {
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+  }
+  .portal-sidebar .pc-brand {
+    flex: 0 0 auto !important;
+    min-height: 62px !important;
+    margin: 0 0 14px !important;
+    padding: 4px !important;
+    border: 0 !important;
+    justify-content: center;
+  }
+  .portal-sidebar.expanded .pc-brand { justify-content: flex-start; }
+  .portal-sidebar nav {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding: 0 !important;
+    gap: 7px !important;
+    scrollbar-width: none;
+  }
+  .portal-sidebar nav::-webkit-scrollbar { display: none; }
+  .portal-sidebar .sidebar-menu-heading,
+  .portal-sidebar .sidebar-toggle,
+  .portal-sidebar .side-profile { display: none !important; }
+  .portal-sidebar .side-link {
+    box-sizing: border-box !important;
+    flex: 0 0 auto !important;
+    white-space: nowrap !important;
+    transform: none !important;
+  }
+  .portal-sidebar.collapsed .side-link {
+    align-self: center !important;
+    justify-content: center !important;
+    width: 48px !important;
+    min-width: 48px !important;
+    height: 48px !important;
+    padding: 0 !important;
+    margin-inline: auto !important;
+  }
+  .portal-sidebar.expanded .side-link {
+    width: 100% !important;
+    min-height: 48px !important;
+    padding: 5px 9px !important;
+  }
+  .portal-sidebar .side-logout,
+  .portal-sidebar.collapsed .side-logout,
+  .portal-sidebar.expanded .side-logout {
+    display: flex !important;
+    visibility: visible !important;
+    flex: 0 0 auto !important;
+    margin-top: auto !important;
+    margin-bottom: 0 !important;
+  }
+  .portal-sidebar.collapsed .side-logout {
+    align-self: center !important;
+    width: 48px !important;
+    min-width: 48px !important;
+    height: 48px !important;
+    justify-content: center !important;
+    padding: 0 !important;
+  }
+}
+@media (max-width: 760px) {
+  .portal-sidebar .sidebar-menu-heading,
+  .portal-sidebar .sidebar-toggle,
+  .portal-sidebar .side-profile { display: none !important; }
+}
+
+/* Header-only adjustments: vendor badge, neutral hover and profile logout */
+.portal-topbar .role-pill {
+  color: #07834b;
+  background: #e8f7ee;
+  border: 1px solid #c9ebd7;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.portal-topbar .bell-btn:hover,
+.portal-topbar .bell-btn.open,
+.portal-topbar .vendor-profile-trigger:hover,
+.portal-topbar .vendor-profile-trigger.open {
+  background: transparent;
+  border-color: transparent;
+  color: inherit;
+}
+.vendor-profile-logout {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 14px;
+  padding: 12px 6px 2px;
+  border: 0;
+  border-top: 1px solid #e6ece8;
+  background: transparent;
+  color: #d43b3b;
+  cursor: pointer;
+  font-weight: 600;
+  text-align: left;
+}
+.vendor-profile-logout:hover { color: #a92727; }
+/* Keep logo proportional in both sidebar modes */
+.portal-sidebar .pc-brand img {
+  object-fit: contain;
+  object-position: center;
+  flex-shrink: 0;
+}
+
+/* Dropdown hover bridge: no dead gap between trigger and popup */
+.portal-topbar .notification-popup,
+.portal-topbar .vendor-profile-popup { top: 100%; margin-top: 0; }
+
+/* Uniform soft-green circular brand mark, including white logo pixels */
+.portal-sidebar .pc-brand img {
+  border-radius: 50%;
+  background: #e4f4e9;
+  box-shadow: 0 0 0 4px #e4f4e9;
+  mix-blend-mode: multiply;
+}
+  
+
+/* FINAL SIDEBAR LOGO - WHITE BACKGROUND, SLIGHTLY SMALLER */
+/* All other portal styles above are unchanged. */
+.portal-sidebar .pc-brand img {
+  width: 52px !important;
+  height: 52px !important;
+  max-width: none !important;
+  flex: 0 0 52px !important;
+  object-fit: contain !important;
+  object-position: center !important;
+  border-radius: 50% !important;
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+  box-shadow: none !important;
+  mix-blend-mode: normal !important;
+}
+@media (min-width: 761px) {
+  .portal-sidebar.collapsed .pc-brand img {
+    width: 44px !important;
+    height: 44px !important;
+    flex-basis: 44px !important;
+  }
+}
