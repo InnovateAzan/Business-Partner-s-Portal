@@ -10,12 +10,20 @@ public sealed class OracleInvoiceOutboxWorker(
     ILogger<OracleInvoiceOutboxWorker> logger)
     : BackgroundService
 {
+    // Maximum number of actual Oracle submission attempts.
+    // Monitoring an existing Oracle interface row is NOT a new submission attempt.
+    private const int MaxSubmissionAttempts = 5;
+
     protected override async Task ExecuteAsync(
         CancellationToken stoppingToken)
     {
         logger.LogInformation(
             "Oracle AP outbox worker started."
         );
+
+        // Separate read-only reconciliation loop continues checking Oracle
+        // even while the submission loop is awaiting a long Oracle call.
+        var reconciliationTask = FastReconciliationLoopAsync(stoppingToken);
 
         while (
             !stoppingToken
@@ -66,6 +74,8 @@ public sealed class OracleInvoiceOutboxWorker(
                 break;
             }
         }
+
+        await reconciliationTask;
 
         logger.LogInformation(
             "Oracle AP outbox worker stopped."
@@ -163,6 +173,23 @@ public sealed class OracleInvoiceOutboxWorker(
                         item.InvoiceId,
                         ct
                     );
+
+                // Stop retrying PENDING / RETRYING submissions once the limit
+                // has been reached. A stale PROCESSING event must first be
+                // reconciled with Oracle to avoid falsely failing an invoice
+                // that Oracle has already imported.
+                if (!item.WasStaleProcessing &&
+                    item.Attempts >= MaxSubmissionAttempts)
+                {
+                    await MarkPermanentFailureAsync(
+                        db,
+                        item,
+                        $"Maximum Oracle submission attempts ({MaxSubmissionAttempts}) reached. " +
+                        "Verify the invoice in Oracle before manually resubmitting.",
+                        "INTEGRATION_FAILED",
+                        ct);
+                    continue;
+                }
 
                 // ====================================================
                 // STALE PROCESSING RECOVERY
@@ -317,11 +344,21 @@ public sealed class OracleInvoiceOutboxWorker(
                         item.Id
                     );
 
-                    await ResetForSafeRetryAsync(
-                        db,
-                        item,
-                        ct
-                    );
+                    if (item.Attempts >= MaxSubmissionAttempts)
+                    {
+                        await MarkPermanentFailureAsync(
+                            db,
+                            item,
+                            $"Maximum Oracle submission attempts ({MaxSubmissionAttempts}) reached. " +
+                            "No matching Oracle AP invoice or interface record was found " +
+                            "during stale-event reconciliation. Verify in Oracle before resubmission.",
+                            "INTEGRATION_FAILED",
+                            ct);
+                    }
+                    else
+                    {
+                        await ResetForSafeRetryAsync(db, item, ct);
+                    }
 
                     continue;
                 }
@@ -469,6 +506,135 @@ public sealed class OracleInvoiceOutboxWorker(
                     ),
                     ct
                 );
+            }
+        }
+    }
+
+    private async Task FastReconciliationLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                using var scope = services.CreateScope();
+                var provider = scope.ServiceProvider;
+                var db = provider.GetRequiredService<AppDbContext>();
+                var oracleRead = provider.GetRequiredService<OracleService>();
+                var oracleOptions = provider.GetRequiredService<OracleOptions>();
+                var configuration = provider.GetRequiredService<IConfiguration>();
+                var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
+                var oracleAp = new OracleApInvoiceService(
+                    oracleOptions, oracleRead, configuration,
+                    loggerFactory.CreateLogger<OracleApInvoiceService>());
+
+                await FastReconcileImportedAsync(db, oracleAp, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Fast Oracle reconciliation iteration failed.");
+            }
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(15), ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+        }
+    }
+
+    // ============================================================
+    // FAST READ-ONLY RECONCILIATION
+    // ============================================================
+
+    private async Task FastReconcileImportedAsync(
+        AppDbContext db,
+        OracleApInvoiceService oracleAp,
+        CancellationToken ct)
+    {
+        // This lookup does not claim the event, reset its lease, or call
+        // ProcessInvoiceAsync. It only finalizes an invoice already in AP.
+        var connection = db.Database.GetDbConnection();
+        if (connection.State != System.Data.ConnectionState.Open)
+            await connection.OpenAsync(ct);
+
+        var candidates = new List<OutboxItem>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText =
+                """
+                SELECT id, aggregate_id, attempt_count, correlation_id,
+                       status, oracle_request_id
+                FROM integration.outbox_messages
+                WHERE status = 'PROCESSING'
+                  AND event_type IN ('InvoiceSubmitted', 'InvoiceResubmitted')
+                  AND processed_at IS NULL
+                  AND created_at <= now() - interval '30 seconds'
+                  AND next_attempt_at > now()
+                ORDER BY created_at
+                LIMIT 10
+                """;
+
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                candidates.Add(new OutboxItem(
+                    reader.GetGuid(0), reader.GetGuid(1), reader.GetInt32(2),
+                    reader.GetGuid(3), reader.GetString(4),
+                    reader.IsDBNull(5) ? null : reader.GetInt64(5)));
+        }
+
+        foreach (var item in candidates)
+        {
+            try
+            {
+                var snapshot = await LoadInvoiceSnapshotAsync(db, item.InvoiceId, ct);
+                var outcome = await oracleAp.GetInterfaceOutcomeAsync(
+                    snapshot.VendorId, snapshot.InvoiceNumber, ct);
+
+                if (!outcome.ImportedInvoiceId.HasValue)
+                {
+                    // A definitive Oracle rejection must not remain PROCESSING
+                    // until the 15-minute lease expires.
+                    if (outcome.InterfaceInvoiceId.HasValue &&
+                        (string.Equals(outcome.InterfaceStatus, "REJECTED", StringComparison.OrdinalIgnoreCase)
+                         || outcome.Rejections.Count > 0))
+                    {
+                        var reason = outcome.Rejections.Count > 0
+                            ? string.Join("; ", outcome.Rejections)
+                            : "Oracle AP interface status is REJECTED.";
+                        await MarkPermanentFailureAsync(db, item, reason,
+                            "ORACLE_REJECTED", ct, item.OracleRequestId);
+                    }
+                    continue; // Unresolved Oracle state: do not submit again here.
+                }
+
+                await MarkSuccessAsync(db, item,
+                    new OracleApProcessResult(
+                        outcome.ImportedInvoiceId.Value,
+                        item.OracleRequestId,
+                        "FAST_RECONCILED", "FAST_RECONCILED",
+                        Array.Empty<string>()), ct);
+
+                logger.LogInformation(
+                    "Fast Oracle AP reconciliation completed. Invoice={InvoiceNumber}, OracleInvoiceId={OracleInvoiceId}",
+                    snapshot.InvoiceNumber, outcome.ImportedInvoiceId.Value);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // A failed status lookup must not disturb the normal recovery path.
+                logger.LogWarning(ex,
+                    "Fast Oracle AP reconciliation skipped. PortalInvoiceId={PortalInvoiceId}",
+                    item.InvoiceId);
             }
         }
     }
@@ -669,7 +835,10 @@ public sealed class OracleInvoiceOutboxWorker(
                                 'PENDING',
                                 'RETRYING'
                             )
-                            THEN attempt_count + 1
+                            THEN CASE
+                                WHEN attempt_count < 5 THEN attempt_count + 1
+                                ELSE attempt_count
+                            END
 
                             ELSE attempt_count
                         END,
@@ -720,10 +889,27 @@ public sealed class OracleInvoiceOutboxWorker(
         string? interfaceStatus,
         CancellationToken ct)
     {
+        // An interface record may remain non-terminal indefinitely.
+        // Stop automatic monitoring after 2 hours and require manual Oracle
+        // reconciliation; never submit a duplicate while outcome is unknown.
+        var monitoringAge = await db.Database.SqlQueryRaw<DateTimeOffset>(
+            "SELECT created_at AS \"Value\" FROM integration.outbox_messages WHERE id = {0}",
+            item.Id).SingleOrDefaultAsync(ct);
+        if (monitoringAge != default &&
+            DateTimeOffset.UtcNow - monitoringAge >= TimeSpan.FromHours(2))
+        {
+            await MarkPermanentFailureAsync(db, item,
+                $"Oracle interface invoice {interfaceInvoiceId} remained {interfaceStatus ?? "UNKNOWN"} for over 2 hours. " +
+                "Manual Oracle AP reconciliation required before any resubmission.",
+                "INTEGRATION_FAILED", ct, item.OracleRequestId);
+            return;
+        }
+
+        // Recheck an existing Oracle AP interface invoice promptly.
         var next =
             DateTimeOffset.UtcNow
-                .AddMinutes(
-                    5
+                .AddSeconds(
+                    15
                 );
 
         await db.Database
@@ -740,6 +926,7 @@ public sealed class OracleInvoiceOutboxWorker(
 
                 WHERE
                     id = {item.Id}
+                    AND status = 'PROCESSING'
                 """,
                 ct
             );
@@ -1027,7 +1214,7 @@ public sealed class OracleInvoiceOutboxWorker(
                     ct
                 );
 
-        await db.Database
+        var updatedRows = await db.Database
             .ExecuteSqlInterpolatedAsync(
                 $"""
                 UPDATE
@@ -1044,9 +1231,16 @@ public sealed class OracleInvoiceOutboxWorker(
 
                 WHERE
                     id = {item.Id}
+                    AND status = 'PROCESSING'
                 """,
                 ct
             );
+
+        if (updatedRows == 0)
+        {
+            await transaction.RollbackAsync(ct);
+            return; // Another worker already finalized this event.
+        }
 
         var invoice =
             await db.Invoices
@@ -1230,7 +1424,7 @@ public sealed class OracleInvoiceOutboxWorker(
                     ct
                 );
 
-        await db.Database
+        var failedRows = await db.Database
             .ExecuteSqlInterpolatedAsync(
                 $"""
                 UPDATE
@@ -1249,9 +1443,19 @@ public sealed class OracleInvoiceOutboxWorker(
 
                 WHERE
                     id = {item.Id}
+                    AND status = 'PROCESSING'
                 """,
                 ct
             );
+
+        if (failedRows == 0)
+        {
+            await transaction.RollbackAsync(ct);
+            logger.LogInformation(
+                "Skipping permanent failure because the outbox event was finalized elsewhere. EventId={EventId}",
+                item.Id);
+            return;
+        }
 
         var invoice =
             await db.Invoices
@@ -1373,8 +1577,7 @@ public sealed class OracleInvoiceOutboxWorker(
                 :
                 item.Attempts + 1;
 
-        const int maxAttempts =
-            6;
+        const int maxAttempts = MaxSubmissionAttempts;
 
         // --------------------------------------------------------
         // For an old PROCESSING item, an Oracle lookup/network
@@ -1434,6 +1637,7 @@ public sealed class OracleInvoiceOutboxWorker(
 
                 WHERE
                     id = {item.Id}
+                    AND status = 'PROCESSING'
                 """,
                 ct
             );
@@ -1450,6 +1654,7 @@ public sealed class OracleInvoiceOutboxWorker(
 
                 WHERE
                     id = {item.InvoiceId}
+                    AND integration_status <> 'SUCCESS'
                 """,
                 ct
             );

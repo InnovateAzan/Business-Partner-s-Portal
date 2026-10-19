@@ -2250,7 +2250,7 @@ export function SubmitInvoicePage() {
                 "12px",
             }}
           >
-            Auto-calculated from selected GRN lines. You may adjust it if required.
+            Auto-calculated from selected GRN lines, excluding tax. Amount Adjustable if required..
           </small>
         </label>
 
@@ -2406,7 +2406,7 @@ export function SubmitInvoicePage() {
         />
 
         <UploadDropZone
-          title={`Receipted Delivery Challan ${
+          title={`Delivery Challan & Other Documents ${
             invoiceType ===
               "GOODS" &&
             !isResubmit

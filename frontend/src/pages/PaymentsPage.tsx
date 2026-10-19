@@ -1,3 +1,4 @@
+import { RecordsPagination, useRecordsPagination } from "../components/RecordsPagination";
 import {
   useEffect,
   useMemo,
@@ -678,6 +679,8 @@ export function PaymentsPage() {
       ),
     ];
 
+  const recordsPaging = useRecordsPagination(filteredRows.length, [search, statusFilter]);
+
   return (
     <div className="page-card">
       <div className="page-card-head vendor-table-head">
@@ -730,7 +733,7 @@ export function PaymentsPage() {
         </thead>
 
         <tbody>
-          {filteredRows.map(
+          {filteredRows.slice(recordsPaging.start, recordsPaging.end).map(
             (row) => (
               <tr
                 key={invoiceKey(row)}
@@ -814,6 +817,8 @@ export function PaymentsPage() {
           )}
         </tbody>
       </table>
+
+      <RecordsPagination total={filteredRows.length} page={recordsPaging.page} pages={recordsPaging.pages} onPage={recordsPaging.setPage} noun="payments" />
 
       {detailPayment && (
         <div

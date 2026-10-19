@@ -145,7 +145,7 @@ export function SupplyChainQcPendingPage() {
     );
 
   const pageSize =
-    15;
+    10;
 
   // ============================================================
   // LOAD DATA
@@ -871,7 +871,7 @@ export function SupplyChainQcPendingPage() {
               PAGINATION
           ==================================================== */}
 
-          <div className="role-pagination">
+          <div className="po-pagination">
             <span>
               Showing{" "}
               {
@@ -909,17 +909,11 @@ export function SupplyChainQcPendingPage() {
                   )
                 }
               >
-                &lt;
+                Previous
               </button>
 
               <em>
-                {
-                  safePage
-                }{" "}
-                /{" "}
-                {
-                  totalPages
-                }
+                Page {safePage} of {totalPages}
               </em>
 
               <button
@@ -942,7 +936,7 @@ export function SupplyChainQcPendingPage() {
                   )
                 }
               >
-                &gt;
+                Next
               </button>
             </div>
           </div>

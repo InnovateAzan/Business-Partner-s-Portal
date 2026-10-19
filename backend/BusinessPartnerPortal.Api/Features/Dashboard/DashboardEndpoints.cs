@@ -1,1308 +1,2713 @@
 using System.Data;
+
 using BusinessPartnerPortal.Api.Data;
+
 using BusinessPartnerPortal.Api.Domain;
+
 using BusinessPartnerPortal.Api.Oracle;
+
 using BusinessPartnerPortal.Api.Security;
+
 using Microsoft.EntityFrameworkCore;
+
+
 
 namespace BusinessPartnerPortal.Api.Features.Dashboard;
 
+
+
 public static class DashboardEndpoints
+
 {
+
     public static IEndpointRouteBuilder MapDashboardEndpoints(
+
         this IEndpointRouteBuilder app)
+
     {
+
         app.MapGet(
+
             "/api/v1/dashboard",
+
             async (
+
                 CurrentUser current,
+
                 AppDbContext db,
+
                 CancellationToken ct) =>
+
             {
+
                 var vendorId =
+
                     await current.GetVendorIdAsync(ct);
 
+
+
                 var invoices =
+
                     db.Invoices.Where(
+
                         x => x.DeletedAt == null);
 
+
+
                 if (
+
                     !current.IsAdmin &&
+
                     current.UserType == "VENDOR")
+
                 {
+
                     invoices = invoices.Where(
+
                         x => x.VendorId == vendorId);
+
                 }
+
+
 
                 var data = new
+
                 {
+
                     totalSubmittedInvoices =
+
                         await invoices.CountAsync(
+
                             x => x.Status != "DRAFT",
+
                             ct),
+
+
 
                     drafts =
+
                         await invoices.CountAsync(
+
                             x => x.Status == "DRAFT",
+
                             ct),
+
+
 
                     inProcess =
+
                         await invoices.CountAsync(
+
                             x =>
+
                                 x.Status == "SUBMITTED" ||
+
                                 x.Status == "SENT_TO_ORACLE" ||
+
                                 x.Status == "UNDER_FINANCE_REVIEW" ||
+
                                 x.Status == "RESUBMITTED",
+
                             ct),
+
+
 
                     validated =
+
                         await invoices.CountAsync(
+
                             x => x.Status == "ACCEPTED",
+
                             ct),
 
+
+
                     rejected =
+
                         await invoices.CountAsync(
+
                             x => x.Status == "RETURNED",
+
                             ct),
+
+
 
                     // NOTE:
+
                     // Database status is still PAID.
+
                     // Portal display mapping converts this to
+
                     // "Pending Payment" in the live dashboard.
+
                     paid =
+
                         await invoices.CountAsync(
+
                             x => x.Status == "PAID",
+
                             ct),
 
+
+
                     poOutstanding =
+
                         vendorId.HasValue
+
                             ? await db.PurchaseOrders.CountAsync(
+
                                 x =>
+
                                     x.VendorId == vendorId &&
+
                                     (
+
                                         x.Status == "OPEN" ||
+
                                         x.Status == "PARTIAL"
+
                                     ),
+
                                 ct)
+
                             : await db.PurchaseOrders.CountAsync(
+
                                 x =>
+
                                     x.Status == "OPEN" ||
+
                                     x.Status == "PARTIAL",
+
                                 ct),
 
+
+
                     grnOutstanding =
+
                         vendorId.HasValue
+
                             ? await (
+
                                 from g in db.Grns
+
                                 join p in db.PurchaseOrders
+
                                     on g.PurchaseOrderId equals p.Id
+
                                 where
+
                                     p.VendorId == vendorId &&
+
                                     (
+
                                         g.Status == "OPEN" ||
+
                                         g.Status == "PARTIAL"
+
                                     )
+
                                 select g
+
                             ).CountAsync(ct)
+
                             : await db.Grns.CountAsync(
+
                                 x =>
+
                                     x.Status == "OPEN" ||
+
                                     x.Status == "PARTIAL",
+
                                 ct)
+
                 };
+
+
 
                 return Results.Ok(data);
+
             })
+
             .RequireAuthorization();
 
+
+
         app.MapGet(
+
             "/api/v1/dashboard/live",
+
             async (
+
                 CurrentUser current,
+
                 AppDbContext db,
+
                 OracleService oracleService,
+
                 CancellationToken ct) =>
+
             {
+
                 if (
+
                     !current.IsAdmin &&
+
                     current.UserType == "VENDOR")
+
                 {
+
                     return Results.Forbid();
+
                 }
+
+
 
                 var permissions =
+
                     await current.GetPermissionsAsync(ct);
 
+
+
                 var canFinance =
+
                     current.IsAdmin ||
+
                     permissions.Contains("INVOICE.VIEW_ALL");
 
+
+
                 var canSupplyChain =
+
                     current.IsAdmin ||
+
                     permissions.Contains("VENDOR.MANAGE");
 
+
+
                 var now =
+
                     DateTimeOffset.UtcNow;
 
+
+
                 var monthStart =
+
                     new DateTimeOffset(
+
                         now.Year,
+
                         now.Month,
+
                         1,
+
                         0,
+
                         0,
+
                         0,
+
                         TimeSpan.Zero);
 
+
+
                 var sixMonthStart =
+
                     monthStart.AddMonths(-5);
 
+
+
                 var twelveMonthStart =
+
                     monthStart.AddMonths(-11);
 
+
+
                 var vendors =
+
                     await db.Vendors
+
                         .AsNoTracking()
+
                         .OrderBy(x => x.VendorName)
+
                         .ToListAsync(ct);
 
+
+
                 // =====================================================
+
                 // TOTAL UNIQUE VENDORS FROM ORACLE
+
                 // =====================================================
+
+
 
                 var oracleVendorCount =
+
                     await oracleService
+
                         .GetOracleVendorCountAsync(ct);
 
+
+
                 var users =
+
                     await db.Users
+
                         .AsNoTracking()
+
                         .ToListAsync(ct);
+
+
 
                 var roles =
+
                     await db.Roles
+
                         .AsNoTracking()
+
                         .Where(x => x.IsActive)
+
                         .ToListAsync(ct);
+
+
 
                 var userRoles =
+
                     await db.UserRoles
+
                         .AsNoTracking()
+
                         .ToListAsync(ct);
+
+
 
                 var vendorUsers =
+
                     await db.VendorUsers
+
                         .AsNoTracking()
+
                         .ToListAsync(ct);
+
+
 
                 var purchaseOrders =
+
                     await db.PurchaseOrders
+
                         .AsNoTracking()
+
                         .ToListAsync(ct);
+
+
 
                 var grns =
+
                     await db.Grns
+
                         .AsNoTracking()
+
                         .ToListAsync(ct);
+
+
 
                 var invoices =
+
                     await db.Invoices
+
                         .AsNoTracking()
+
                         .Where(
+
                             x =>
+
                                 x.DeletedAt == null &&
+
                                 x.Status != "DRAFT")
+
                         .ToListAsync(ct);
+
+
+
+                // Fetch live Oracle pay groups for invoices shown in Finance records.
+
+                var oraclePayGroups = canFinance
+
+                    ? await oracleService.GetInvoicePayGroupsAsync(
+
+                        invoices.Select(x => x.OracleInvoiceId ?? ""), ct)
+
+                    : new Dictionary<string, string?>();
+
+
+
+                var oraclePaymentStatuses = canFinance
+                    ? await oracleService.GetInvoicePaymentStatusesAsync(
+                        invoices.Select(x => x.OracleInvoiceId ?? ""), ct)
+                    : new Dictionary<string, string>();
+
+                var oracleVoucherDetails = canFinance
+                    ? await oracleService.GetInvoiceVoucherDetailsAsync(
+                        invoices.Select(x => x.OracleInvoiceId ?? ""), ct)
+                    : new Dictionary<string, (string? DocSequenceId, string? VoucherNumber)>();
+
+                var vendorByIdForLines = vendors.ToDictionary(v => v.Id, v => v.OracleVendorId);
+                // Reuse the saved GRN allocations used by Vendor Invoice History.
+                // These identify the exact PO/GRN lines submitted for each invoice.
+                var invoiceIds = invoices.Select(x => x.Id).ToHashSet();
+                var submittedAllocations = await db.InvoiceLineGrnAllocations
+                    .AsNoTracking()
+                    .Where(x => invoiceIds.Contains(x.InvoiceId))
+                    .ToListAsync(ct);
+
+                var allocationsByInvoice = submittedAllocations
+                    .GroupBy(x => x.InvoiceId)
+                    .ToDictionary(g => g.Key, g => g.OrderBy(x => x.PoNumber)
+                        .ThenBy(x => x.PoLineNumber).ToList());
+
+                // Oracle item descriptions are keyed by vendor, PO and PO line ID.
+                // Cache each vendor/PO lookup once, even when multiple invoices use it.
+                var submittedLineDescriptions = new Dictionary<(Guid VendorId, string Po, long LineId), string?>();
+                var descriptionRequests = invoices
+                    .Where(x => allocationsByInvoice.ContainsKey(x.Id))
+                    .SelectMany(x => allocationsByInvoice[x.Id]
+                        .Select(a => (x.VendorId, a.PoNumber)))
+                    .Distinct()
+                    .ToList();
+
+                foreach (var request in descriptionRequests)
+                {
+                    if (!vendorByIdForLines.TryGetValue(request.VendorId, out var oracleVendorText) ||
+                        !decimal.TryParse(oracleVendorText, out var oracleVendorId))
+                        continue;
+
+                    try
+                    {
+                        var poRows = await oracleService.GetPoGrnsAsync(oracleVendorId, request.PoNumber, ct);
+                        foreach (var poRow in poRows)
+                        {
+                            if (long.TryParse(poRow.PoLineId, out var poLineId))
+                                submittedLineDescriptions[(request.VendorId, request.PoNumber, poLineId)] =
+                                    poRow.ItemDescription;
+                        }
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // Preserve finance history if Oracle's live PO view is unavailable.
+                    }
+                }
 
                 var payments =
+
                     await db.Payments
+
                         .AsNoTracking()
+
                         .ToListAsync(ct);
 
+
+
                 // Finance approval turnaround is calculated from the
+
                 // immutable invoice status history so later payment or
+
                 // reconciliation updates do not distort the approval time.
+
                 var invoiceStatusHistory =
+
                     canFinance
+
                         ? await db.InvoiceStatusHistory
+
                             .AsNoTracking()
+
                             .ToListAsync(ct)
+
                         : new List<InvoiceStatusHistory>();
 
+
+
                 static string[] SplitCsv(string? value) =>
+
                     string.IsNullOrWhiteSpace(value)
+
                         ? Array.Empty<string>()
+
                         : value.Split(
+
                             ',',
+
                             StringSplitOptions.RemoveEmptyEntries |
+
                             StringSplitOptions.TrimEntries);
 
+
+
                 // =====================================================
+
                 // NORMALIZE INVOICE STATUS FOR PORTAL DISPLAY
+
                 // =====================================================
+
+
 
                 static string NormalizeInvoiceStatus(
+
                     string status,
+
                     string integrationStatus,
+
                     string? oracleInvoiceId)
+
                 {
+
                     var normalizedStatus =
+
                         (status ?? string.Empty)
+
                             .Trim()
+
                             .ToUpperInvariant();
+
+
 
                     var normalizedIntegration =
+
                         (integrationStatus ?? string.Empty)
+
                             .Trim()
+
                             .ToUpperInvariant();
 
+
+
                     // Finance dashboard must use the same business status
+
                     // terminology as Vendor Invoice History. Oracle/business
+
                     // status takes priority over technical integration state.
+
                     if (normalizedStatus is "CANCELLED" or "CANCELED")
+
                         return "Cancelled";
 
+
+
                     if (normalizedStatus is "REJECTED" or "ORACLE_REJECTED" or "RETURNED")
+
                         return "Rejected";
+
+
 
                     if (normalizedStatus is "ACCEPTED" or "APPROVED")
+
                         return "Approved";
 
+
+
                     if (normalizedStatus == "PAID")
+
                         return "Paid";
 
+
+
                     if (normalizedStatus is "PENDING" or "UNDER_FINANCE_REVIEW")
+
                         return "Pending for Approval";
 
+
+
                     if (normalizedStatus is "INTEGRATION_FAILED" or "FAILED" ||
+
                         normalizedIntegration is "FAILED" or "INTEGRATION_FAILED")
+
                         return "Rejected";
 
+
+
                     if (normalizedStatus is "SUBMITTED" or "SENT_TO_ORACLE" or "RESUBMITTED" or "PROCESSING" or "RETRYING" ||
+
                         normalizedIntegration is "PENDING" or "PROCESSING" or "RETRYING")
+
                         return "Processing";
+
+
 
                     // If Oracle has already created the invoice but the business
+
                     // status has not synchronized yet, keep the row in a neutral
+
                     // transient state instead of showing the old generic Integrated label.
+
                     if (!string.IsNullOrWhiteSpace(oracleInvoiceId) ||
+
                         normalizedIntegration is "PROCESSED" or "SUCCESS")
+
                         return "Processing";
 
+
+
                     return "Pending for Approval";
+
                 }
+
+
 
                 var vendorById =
+
                     vendors.ToDictionary(
+
                         x => x.Id,
+
                         x => x);
+
+
 
                 var userById =
+
                     users.ToDictionary(
+
                         x => x.Id,
+
                         x => x);
+
+
 
                 var roleById =
+
                     roles.ToDictionary(
+
                         x => x.Id,
+
                         x => x);
+
+
 
                 var grnsByPo =
+
                     grns.GroupBy(
+
                             x => x.PurchaseOrderId)
+
                         .ToDictionary(
+
                             g => g.Key,
+
                             g => g.ToList());
+
+
 
                 var paymentsByInvoice =
+
                     payments.GroupBy(
+
                             x => x.InvoiceId)
+
                         .ToDictionary(
+
                             g => g.Key,
+
                             g => g.ToList());
 
+
+
                 var invoiceRows =
+
                     invoices
+
                         .OrderByDescending(x => x.UpdatedAt)
+
                         .Select(x =>
+
                         {
+
                             vendorById.TryGetValue(
+
                                 x.VendorId,
+
                                 out var vendor);
+
+
 
                             paymentsByInvoice.TryGetValue(
+
                                 x.Id,
+
                                 out var invoicePayments);
 
+
+
                             var paidAmount =
+
                                 invoicePayments?
+
                                     .Where(
+
                                         p =>
+
                                             !p.Status.Equals(
+
                                                 "FAILED",
+
                                                 StringComparison.OrdinalIgnoreCase))
+
                                     .Sum(p => p.Amount)
+
                                 ?? 0m;
 
+
+
                             return new
+
                             {
+
                                 id = x.Id,
+
                                 invoiceNumber = x.InvoiceNumber,
+
                                 vendorId = x.VendorId,
+
                                 vendorName =
+
                                     vendor?.VendorName ?? "-",
+
                                 invoiceDate = x.InvoiceDate,
+
                                 invoiceAmount = x.InvoiceAmount,
+
                                 currencyCode = x.CurrencyCode,
+
                                 poNumbers = SplitCsv(x.PoNumber),
-                                grnNumbers = SplitCsv(x.GrnNumbers),
+
+                                 grnNumbers = SplitCsv(x.GrnNumbers),
+                                 submittedLines = allocationsByInvoice.TryGetValue(x.Id, out var invoiceAllocations)
+                                     ? invoiceAllocations.Select(a => new
+                                     {
+                                         a.PoNumber,
+                                         a.GrnNumber,
+                                         a.PoLineNumber,
+                                         itemDescription = submittedLineDescriptions.GetValueOrDefault(
+                                             (x.VendorId, a.PoNumber, a.PoLineId)),
+                                         submittedQuantity = a.AllocatedQuantity,
+                                         submittedQty = a.AllocatedQuantity,
+                                         a.UnitPrice,
+                                         amount = a.AllocatedAmount
+                                     }).ToList()
+                                     : null,
+
+
 
                                 status =
+
                                     NormalizeInvoiceStatus(
+
                                         x.Status,
+
                                         x.IntegrationStatus,
+
                                         x.OracleInvoiceId),
 
+
+
+                                paymentStatus = !string.IsNullOrWhiteSpace(x.OracleInvoiceId) &&
+                                    oraclePaymentStatuses.TryGetValue(x.OracleInvoiceId, out var paymentStatus)
+                                        ? paymentStatus : null,
+
                                 rawStatus = x.Status,
+
                                 integrationStatus = x.IntegrationStatus,
+
                                 remarks = x.Remarks,
+
                                 oracleInvoiceNo = x.OracleInvoiceId,
+
+                                payGroup = !string.IsNullOrWhiteSpace(x.OracleInvoiceId) &&
+
+                                    oraclePayGroups.TryGetValue(x.OracleInvoiceId, out var payGroup)
+
+                                        ? payGroup : null,
+
+                                docSequenceId = !string.IsNullOrWhiteSpace(x.OracleInvoiceId) &&
+                                    oracleVoucherDetails.TryGetValue(x.OracleInvoiceId, out var docSequenceDetails)
+                                        ? docSequenceDetails.DocSequenceId : null,
+                                voucherNumber = !string.IsNullOrWhiteSpace(x.OracleInvoiceId) &&
+                                    oracleVoucherDetails.TryGetValue(x.OracleInvoiceId, out var voucherDetails)
+                                        ? voucherDetails.VoucherNumber : null,
                                 submissionDate = x.SubmissionDate,
+
                                 updatedAt = x.UpdatedAt,
+
                                 paidAmount,
 
+
+
                                 outstandingAmount =
+
                                     Math.Max(
+
                                         0m,
+
                                         x.InvoiceAmount - paidAmount)
+
                             };
+
                         })
+
                         .ToList();
+
+
 
                 var invoiceStatus = new
+
                 {
+
                     total =
+
                         invoiceRows.Count,
 
+
+
                     pending =
+
                         invoiceRows.Count(
+
                             x => x.status == "Pending for Approval"),
 
+
+
                     approved =
+
                         invoiceRows.Count(
+
                             x => x.status == "Approved"),
 
+
+
                     rejected =
+
                         invoiceRows.Count(
+
                             x => x.status == "Rejected"),
 
+
+
                     cancelled =
+
                         invoiceRows.Count(
+
                             x => x.status == "Cancelled"),
 
+
+
                     paid =
+
                         invoiceRows.Count(
+
                             x => x.status == "Paid"),
 
+
+
                     processing =
+
                         invoiceRows.Count(
+
                             x => x.status == "Processing")
+
                 };
 
+
+
                 var invoiceTrend =
+
                     Enumerable.Range(0, 6)
+
                         .Select(
+
                             offset =>
+
                                 sixMonthStart.AddMonths(offset))
+
                         .Select(month => new
+
                         {
+
                             month =
+
                                 month.ToString("MMM"),
+
+
 
                             submitted =
+
                                 invoices.Count(
+
                                     x =>
+
                                         (x.SubmissionDate ?? x.CreatedAt).Year ==
+
                                             month.Year &&
+
                                         (x.SubmissionDate ?? x.CreatedAt).Month ==
+
                                             month.Month),
 
+
+
                             approved =
+
                                 invoices.Count(
+
                                     x =>
+
                                         (x.SubmissionDate ?? x.CreatedAt).Year ==
+
                                             month.Year &&
+
                                         (x.SubmissionDate ?? x.CreatedAt).Month ==
+
                                             month.Month &&
+
                                         NormalizeInvoiceStatus(
+
                                             x.Status,
+
                                             x.IntegrationStatus,
+
                                             x.OracleInvoiceId) ==
+
                                         "Approved")
+
                         })
+
                         .ToList();
+
+
 
                 var invoiceById =
+
                     invoices.ToDictionary(
+
                         x => x.Id,
+
                         x => x);
 
+
+
                 var historyByInvoice =
+
                     invoiceStatusHistory
+
                         .GroupBy(x => x.InvoiceId)
+
                         .ToDictionary(
+
                             g => g.Key,
+
                             g => g.OrderBy(x => x.ChangedAt).ToList());
 
+
+
                 var approvalTurnaroundSamples =
+
                     historyByInvoice
+
                         .SelectMany(pair =>
+
                         {
+
                             if (!invoiceById.TryGetValue(pair.Key, out var invoice))
+
                             {
+
                                 return Enumerable.Empty<(DateTimeOffset ApprovedAt, double Days)>();
+
                             }
+
+
 
                             var approval =
+
                                 pair.Value
+
                                     .Where(h =>
+
                                     {
+
                                         var newStatus =
+
                                             (h.NewStatus ?? string.Empty)
+
                                                 .Trim()
+
                                                 .ToUpperInvariant();
 
+
+
                                         return newStatus is "APPROVED" or "ACCEPTED";
+
                                     })
+
                                     .OrderBy(h => h.ChangedAt)
+
                                     .FirstOrDefault();
+
+
 
                             if (approval is null || approval.ChangedAt < twelveMonthStart)
+
                             {
+
                                 return Enumerable.Empty<(DateTimeOffset ApprovedAt, double Days)>();
+
                             }
+
+
 
                             var submissionEvent =
+
                                 pair.Value
+
                                     .Where(h =>
+
                                         h.ChangedAt <= approval.ChangedAt &&
+
                                         (
+
                                             string.Equals(
+
                                                 h.NewStatus,
+
                                                 "SUBMITTED",
+
                                                 StringComparison.OrdinalIgnoreCase) ||
+
                                             string.Equals(
+
                                                 h.NewStatus,
+
                                                 "RESUBMITTED",
+
                                                 StringComparison.OrdinalIgnoreCase)
+
                                         ))
+
                                     .OrderByDescending(h => h.ChangedAt)
+
                                     .FirstOrDefault();
+
+
 
                             var submittedAt =
+
                                 submissionEvent?.ChangedAt
+
                                 ?? invoice.SubmissionDate
+
                                 ?? invoice.CreatedAt;
 
+
+
                             if (submittedAt > approval.ChangedAt)
+
                             {
+
                                 submittedAt = invoice.CreatedAt;
+
                             }
 
+
+
                             var days =
+
                                 Math.Max(
+
                                     0d,
+
                                     (approval.ChangedAt - submittedAt).TotalDays);
 
+
+
                             return new[]
+
                             {
+
                                 (ApprovedAt: approval.ChangedAt, Days: days)
+
                             };
+
                         })
+
                         .ToList();
+
+
 
                 var approvalTurnaroundTrend =
+
                     Enumerable.Range(0, 12)
+
                         .Select(offset => twelveMonthStart.AddMonths(offset))
+
                         .Select(month =>
+
                         {
+
                             var samples =
+
                                 approvalTurnaroundSamples
+
                                     .Where(x =>
+
                                         x.ApprovedAt.Year == month.Year &&
+
                                         x.ApprovedAt.Month == month.Month)
+
                                     .Select(x => x.Days)
+
                                     .ToList();
 
+
+
                             return new
+
                             {
+
                                 month = month.ToString("MMM"),
+
                                 averageDays =
+
                                     samples.Count == 0
+
                                         ? (double?)null
+
                                         : Math.Round(samples.Average(), 1),
+
                                 approvedCount = samples.Count
+
                             };
+
                         })
+
                         .ToList();
+
+
 
                 var topInvoiceVendors =
+
                     invoices
+
                         .GroupBy(x => x.VendorId)
+
                         .Select(g => new
+
                         {
+
                             vendorId = g.Key,
 
+
+
                             vendorName =
+
                                 vendorById.TryGetValue(
+
                                     g.Key,
+
                                     out var v)
+
                                     ? v.VendorName
+
                                     : "-",
 
+
+
                             amount =
+
                                 g.Sum(x => x.InvoiceAmount)
+
                         })
+
                         .OrderByDescending(x => x.amount)
+
                         .Take(5)
+
                         .ToList();
+
+
 
                 var purchaseOrderRows =
+
                     purchaseOrders
+
                         .OrderByDescending(x => x.PoDate)
+
                         .ThenByDescending(x => x.PoNumber)
+
                         .Select(po =>
+
                         {
+
                             vendorById.TryGetValue(
+
                                 po.VendorId,
+
                                 out var vendor);
 
+
+
                             grnsByPo.TryGetValue(
+
                                 po.Id,
+
                                 out var poGrns);
 
+
+
                             poGrns ??=
+
                                 new List<
+
                                     BusinessPartnerPortal.Api.Domain.Grn>();
 
+
+
                             var relatedInvoices =
+
                                 invoices
+
                                     .Where(
+
                                         inv =>
+
                                             SplitCsv(inv.PoNumber)
+
                                                 .Contains(
+
                                                     po.PoNumber,
+
                                                     StringComparer.OrdinalIgnoreCase))
+
                                     .ToList();
+
+
 
                             var grnStatus =
+
                                 poGrns.Count == 0
+
                                     ? "Pending"
+
                                     : poGrns.All(
+
                                         g =>
+
                                             g.Status.Equals(
+
                                                 "CLOSED",
+
                                                 StringComparison.OrdinalIgnoreCase))
+
                                         ? "Received"
+
                                         : poGrns.Any(
+
                                             g =>
+
                                                 g.Status.Equals(
+
                                                     "PARTIAL",
+
                                                     StringComparison.OrdinalIgnoreCase))
+
                                             ? "Partially Received"
+
                                             : "Received";
 
+
+
                             var invoiceStatusText =
+
                                 relatedInvoices.Count == 0
+
                                     ? "Not Invoiced"
+
                                     : relatedInvoices.Any(
+
                                         inv =>
+
                                             NormalizeInvoiceStatus(
+
                                                 inv.Status,
+
                                                 inv.IntegrationStatus,
+
                                                 inv.OracleInvoiceId) ==
+
                                             "Approved" ||
+
                                         NormalizeInvoiceStatus(
+
                                             inv.Status,
+
                                             inv.IntegrationStatus,
+
                                             inv.OracleInvoiceId) ==
+
                                             "Paid")
+
                                         ? "Invoiced"
+
                                         : "Pending";
 
+
+
                             return new
+
                             {
+
                                 id = po.Id,
+
                                 poNumber = po.PoNumber,
+
                                 vendorId = po.VendorId,
+
                                 vendorName =
+
                                     vendor?.VendorName ?? "-",
+
                                 poDate = po.PoDate,
+
                                 amount = po.TotalAmount,
+
                                 remainingAmount = po.RemainingAmount,
+
                                 currencyCode = po.CurrencyCode,
+
                                 status = po.Status,
+
                                 grnStatus,
+
                                 invoiceStatus = invoiceStatusText
+
                             };
+
                         })
+
                         .ToList();
+
+
 
                 var grnRows =
+
                     (
+
                         from g in grns
+
                         join po in purchaseOrders
+
                             on g.PurchaseOrderId equals po.Id
 
+
+
                         let vendor =
+
                             vendorById.TryGetValue(
+
                                 po.VendorId,
+
                                 out var v)
+
                                 ? v
+
                                 : null
 
+
+
                         orderby
+
                             g.GrnDate descending,
+
                             g.GrnNumber descending
 
+
+
                         select new
+
                         {
+
                             id = g.Id,
+
                             grnNumber = g.GrnNumber,
+
                             grnDate = g.GrnDate,
+
                             status = g.Status,
+
                             qcStatus = g.QcStatus,
+
                             poNumber = po.PoNumber,
+
                             vendorId = po.VendorId,
+
                             vendorName =
+
                                 vendor?.VendorName ?? "-",
+
                             poAmount = po.TotalAmount
+
                         }
+
                     ).ToList();
 
+
+
                 var poTrend =
+
                     Enumerable.Range(0, 6)
+
                         .Select(
+
                             offset =>
+
                                 sixMonthStart.AddMonths(offset))
+
                         .Select(month => new
+
                         {
+
                             month =
+
                                 month.ToString("MMM"),
+
+
 
                             purchaseOrders =
+
                                 purchaseOrders.Count(
+
                                     x =>
+
                                         x.PoDate.HasValue &&
+
                                         x.PoDate.Value.Year == month.Year &&
+
                                         x.PoDate.Value.Month == month.Month),
 
+
+
                             grns =
+
                                 grns.Count(
+
                                     x =>
+
                                         x.GrnDate.HasValue &&
+
                                         x.GrnDate.Value.Year == month.Year &&
+
                                         x.GrnDate.Value.Month == month.Month)
+
                         })
+
                         .ToList();
+
+
 
                 var topPoVendors =
+
                     purchaseOrders
+
                         .GroupBy(x => x.VendorId)
+
                         .Select(g => new
+
                         {
+
                             vendorId = g.Key,
 
+
+
                             vendorName =
+
                                 vendorById.TryGetValue(
+
                                     g.Key,
+
                                     out var v)
+
                                     ? v.VendorName
+
                                     : "-",
 
+
+
                             amount =
+
                                 g.Sum(x => x.TotalAmount)
+
                         })
+
                         .OrderByDescending(x => x.amount)
+
                         .Take(5)
+
                         .ToList();
+
+
 
                 var activePortalUserIds =
+
                     vendorUsers
+
                         .Where(x => x.IsActive)
+
                         .Select(x => x.UserId)
+
                         .Distinct()
+
                         .ToHashSet();
 
+
+
                 var vendorAccessRows =
+
                     vendors
+
                         .Select(v =>
+
                         {
+
                             var mappings =
+
                                 vendorUsers
+
                                     .Where(
+
                                         x => x.VendorId == v.Id)
+
                                     .ToList();
+
+
 
                             var mappedUsers =
+
                                 mappings
+
                                     .Select(
+
                                         m =>
+
                                             userById.TryGetValue(
+
                                                 m.UserId,
+
                                                 out var u)
+
                                                 ? u
+
                                                 : null)
+
                                     .Where(u => u != null)
+
                                     .ToList();
 
+
+
                             var activeUsers =
+
                                 mappings.Count(
+
                                     m =>
+
                                         m.IsActive &&
+
                                         userById.TryGetValue(
+
                                             m.UserId,
+
                                             out var u) &&
+
                                         u.IsActive);
 
+
+
                             var lastAccess =
+
                                 mappedUsers
+
                                     .Select(u => u!.LastLoginAt)
+
                                     .Where(x => x.HasValue)
+
                                     .OrderByDescending(x => x)
+
                                     .FirstOrDefault();
 
+
+
                             return new
+
                             {
+
                                 vendorId = v.Id,
+
                                 vendorCode = v.VendorCode,
+
                                 vendorName = v.VendorName,
+
                                 oracleVendorId = v.OracleVendorId,
+
                                 portalUsers = mappings.Count,
+
                                 activePortalUsers = activeUsers,
 
+
+
                                 accessStatus =
+
                                     activeUsers > 0
+
                                         ? "Enabled"
+
                                         : "Not Enabled",
 
+
+
                                 lastAccess,
+
                                 isActive = v.IsActive
+
                             };
+
                         })
+
                         .OrderByDescending(x => x.lastAccess)
+
                         .ThenBy(x => x.vendorName)
+
                         .ToList();
+
+
 
                 var pendingVendorRequests =
+
                     vendorAccessRows
+
                         .Where(
+
                             x =>
+
                                 x.isActive &&
+
                                 x.activePortalUsers == 0)
+
                         .ToList();
+
+
 
                 var recentlyOnboardedVendors =
+
                     vendorUsers
+
                         .Where(x => x.IsActive)
+
                         .Select(x => new
+
                         {
+
                             mapping = x,
 
+
+
                             vendor =
+
                                 vendorById.TryGetValue(
+
                                     x.VendorId,
+
                                     out var v)
+
                                     ? v
+
                                     : null,
 
+
+
                             user =
+
                                 userById.TryGetValue(
+
                                     x.UserId,
+
                                     out var u)
+
                                     ? u
+
                                     : null
+
                         })
+
                         .Where(
+
                             x =>
+
                                 x.vendor != null &&
+
                                 x.user != null)
+
                         .OrderByDescending(
+
                             x => x.user!.CreatedAt)
+
                         .Select(x => new
+
                         {
+
                             vendorId = x.vendor!.Id,
+
                             vendorName = x.vendor.VendorName,
+
                             oracleVendorId = x.vendor.OracleVendorId,
+
                             userName = x.user!.FullName,
+
                             email = x.user.Email,
 
+
+
                             active =
+
                                 x.mapping.IsActive &&
+
                                 x.user.IsActive,
 
+
+
                             onboardedAt = x.user.CreatedAt,
+
                             lastAccess = x.user.LastLoginAt
+
                         })
+
                         .ToList();
+
+
 
                 var fiscalYearStart =
+
                     now.Month >= 7
+
                         ? new DateTimeOffset(
+
                             now.Year,
+
                             7,
+
                             1,
+
                             0,
+
                             0,
+
                             0,
+
                             TimeSpan.Zero)
+
                         : new DateTimeOffset(
+
                             now.Year - 1,
+
                             7,
+
                             1,
+
                             0,
+
                             0,
+
                             0,
+
                             TimeSpan.Zero);
 
+
+
                 var onboardedThisFiscalYear =
+
                     recentlyOnboardedVendors
+
                         .Where(x => x.onboardedAt >= fiscalYearStart)
+
                         .Select(x => x.vendorId)
+
                         .Distinct()
+
                         .Count();
 
+
+
                 var onboardingTrend =
+
                     Enumerable.Range(0, 6)
+
                         .Select(offset => sixMonthStart.AddMonths(offset))
+
                         .Select(month => new
+
                         {
+
                             month = month.ToString("MMM"),
 
+
+
                             onboarded =
+
                                 recentlyOnboardedVendors
+
                                     .Where(
+
                                         x =>
+
                                             x.onboardedAt.Year == month.Year &&
+
                                             x.onboardedAt.Month == month.Month)
+
                                     .Select(x => x.vendorId)
+
                                     .Distinct()
+
                                     .Count()
+
                         })
+
                         .ToList();
+
+
 
                 var portalEnabledVendorCount =
+
                     vendorAccessRows.Count(
+
                         x => x.activePortalUsers > 0);
 
+
+
                 var recentUsers =
+
                     users
+
                         .OrderByDescending(x => x.CreatedAt)
+
                         .Take(100)
+
                         .Select(u => new
+
                         {
+
                             id = u.Id,
+
                             name = u.FullName,
+
                             email = u.Email,
+
                             userType = u.UserType,
 
+
+
                             status =
+
                                 u.IsActive
+
                                     ? "Active"
+
                                     : "Inactive",
 
+
+
                             createdOn = u.CreatedAt,
+
                             lastLoginAt = u.LastLoginAt,
 
+
+
                             roles =
+
                                 userRoles
+
                                     .Where(
+
                                         ur => ur.UserId == u.Id)
+
                                     .Select(
+
                                         ur =>
+
                                             roleById.TryGetValue(
+
                                                 ur.RoleId,
+
                                                 out var r)
+
                                                 ? r.Name
+
                                                 : null)
+
                                     .Where(x => x != null)
+
                                     .ToArray()
+
                         })
+
                         .ToList();
+
+
 
                 var roleDistribution =
+
                     roles
+
                         .Select(r => new
+
                         {
+
                             code = r.Code,
+
                             name = r.Name,
 
+
+
                             count =
+
                                 userRoles.Count(
+
                                     ur => ur.RoleId == r.Id)
+
                         })
+
                         .Where(x => x.count > 0)
+
                         .OrderByDescending(x => x.count)
+
                         .ToList();
+
+
 
                 var userTrend =
+
                     Enumerable.Range(0, 6)
+
                         .Select(
+
                             offset =>
+
                                 sixMonthStart.AddMonths(offset))
+
                         .Select(month => new
+
                         {
+
                             month =
+
                                 month.ToString("MMM"),
 
+
+
                             newUsers =
+
                                 users.Count(
+
                                     x =>
+
                                         x.CreatedAt.Year == month.Year &&
+
                                         x.CreatedAt.Month == month.Month),
 
+
+
                             activeUsers =
+
                                 users.Count(
+
                                     x =>
+
                                         x.IsActive &&
+
                                         x.CreatedAt <= month.AddMonths(1))
+
                         })
+
                         .ToList();
 
+
+
                 var integrationRows =
+
                     new List<IntegrationQueueItem>();
 
+
+
                 var auditRows =
+
                     new List<AuditDashboardItem>();
 
+
+
                 var connection =
+
                     db.Database.GetDbConnection();
 
+
+
                 if (
+
                     connection.State != ConnectionState.Open)
+
                 {
+
                     await connection.OpenAsync(ct);
+
                 }
 
+
+
                 await using (
+
                     var command =
+
                         connection.CreateCommand())
+
                 {
+
                     command.CommandText =
+
                         """
+
                         SELECT id, event_type, aggregate_id, status, attempt_count, last_error,
+
                                created_at, processed_at, external_reference, oracle_request_id, oracle_group_id
+
                         FROM integration.outbox_messages
+
                         ORDER BY created_at DESC
+
                         LIMIT 500
+
                         """;
 
+
+
                     await using var reader =
+
                         await command.ExecuteReaderAsync(ct);
 
+
+
                     while (
+
                         await reader.ReadAsync(ct))
+
                     {
+
                         integrationRows.Add(
+
                             new IntegrationQueueItem(
+
                                 reader.GetGuid(0),
+
                                 reader.GetString(1),
+
                                 reader.GetGuid(2),
+
                                 reader.GetString(3),
+
                                 reader.GetInt32(4),
 
+
+
                                 reader.IsDBNull(5)
+
                                     ? null
+
                                     : reader.GetString(5),
+
+
 
                                 reader.GetFieldValue<DateTimeOffset>(6),
 
+
+
                                 reader.IsDBNull(7)
+
                                     ? null
+
                                     : reader.GetFieldValue<DateTimeOffset>(7),
 
+
+
                                 reader.IsDBNull(8)
+
                                     ? null
+
                                     : reader.GetString(8),
 
+
+
                                 reader.IsDBNull(9)
+
                                     ? null
+
                                     : reader.GetInt64(9),
 
+
+
                                 reader.IsDBNull(10)
+
                                     ? null
+
                                     : reader.GetString(10)));
+
                     }
+
                 }
+
+
 
                 if (current.IsAdmin)
+
                 {
+
                     await using var command =
+
                         connection.CreateCommand();
 
+
+
                     command.CommandText =
+
                         """
+
                         SELECT id, user_id, action, entity_type, entity_id, created_at
+
                         FROM audit.audit_logs
+
                         ORDER BY created_at DESC
+
                         LIMIT 100
+
                         """;
 
+
+
                     await using var reader =
+
                         await command.ExecuteReaderAsync(ct);
 
+
+
                     while (
+
                         await reader.ReadAsync(ct))
+
                     {
+
                         auditRows.Add(
+
                             new AuditDashboardItem(
+
                                 reader.GetInt64(0),
 
+
+
                                 reader.IsDBNull(1)
+
                                     ? null
+
                                     : reader.GetGuid(1),
 
+
+
                                 reader.GetString(2),
+
                                 reader.GetString(3),
 
+
+
                                 reader.IsDBNull(4)
+
                                     ? null
+
                                     : reader.GetGuid(4),
 
+
+
                                 reader.GetFieldValue<DateTimeOffset>(5)));
+
                     }
+
                 }
 
+
+
                 var recentActivities =
+
                     auditRows
+
                         .Select(a => new
+
                         {
+
                             id = a.Id,
+
                             action = a.Action,
+
                             entityType = a.EntityType,
+
                             entityId = a.EntityId,
+
                             createdAt = a.CreatedAt,
 
+
+
                             userName =
+
                                 a.UserId.HasValue &&
+
                                 userById.TryGetValue(
+
                                     a.UserId.Value,
+
                                     out var u)
+
                                     ? u.FullName
+
                                     : null,
 
+
+
                             userEmail =
+
                                 a.UserId.HasValue &&
+
                                 userById.TryGetValue(
+
                                     a.UserId.Value,
+
                                     out var ue)
+
                                     ? ue.Email
+
                                     : null
+
                         })
+
                         .ToList();
+
+
 
                 var integrationSummary =
+
                     integrationRows
+
                         .GroupBy(x => x.EventType)
+
                         .Select(g => new
+
                         {
+
                             process = g.Key,
+
                             total = g.Count(),
 
+
+
                             success =
+
                                 g.Count(
+
                                     x =>
+
                                         x.Status.Equals(
+
                                             "PROCESSED",
+
                                             StringComparison.OrdinalIgnoreCase) ||
+
                                         x.Status.Equals(
+
                                             "COMPLETED",
+
                                             StringComparison.OrdinalIgnoreCase)),
+
+
 
                             failed =
+
                                 g.Count(
+
                                     x =>
+
                                         x.Status.Equals(
+
                                             "FAILED",
+
                                             StringComparison.OrdinalIgnoreCase)),
 
+
+
                             pending =
+
                                 g.Count(
+
                                     x =>
+
                                         x.Status.Equals(
+
                                             "PENDING",
+
                                             StringComparison.OrdinalIgnoreCase) ||
+
                                         x.Status.Equals(
+
                                             "PROCESSING",
+
                                             StringComparison.OrdinalIgnoreCase))
+
                         })
+
                         .OrderByDescending(x => x.total)
+
                         .ToList();
 
+
+
                 return Results.Ok(
+
                     new
+
                     {
+
                         generatedAt = now,
 
+
+
                         finance =
+
                             canFinance
+
                                 ? new
+
                                 {
+
                                     kpis = new
+
                                     {
+
                                         totalInvoices =
+
                                             invoiceStatus.total,
 
+
+
                                         pendingForApproval =
+
                                             invoiceStatus.pending,
 
+
+
                                         approved =
+
                                             invoiceStatus.approved,
 
+
+
                                         rejected =
+
                                             invoiceStatus.rejected,
 
+
+
                                         cancelled =
+
                                             invoiceStatus.cancelled,
 
+
+
                                         paid =
+
                                             invoiceStatus.paid,
 
+
+
                                         payments =
+
                                             payments.Count,
 
+
+
                                         purchaseOrders =
+
                                             purchaseOrders.Count,
 
+
+
                                         grns =
+
                                             grns.Count
+
                                     },
 
+
+
                                     status =
+
                                         invoiceStatus,
 
+
+
                                     trend =
+
                                         invoiceTrend,
+
+
 
                                     approvalTurnaroundTrend,
 
+
+
                                     topVendors =
+
                                         topInvoiceVendors,
 
+
+
                                     invoices =
+
                                         invoiceRows
+
                                 }
+
                                 : null,
 
+
+
                         supplyChain =
+
                             canSupplyChain
+
                                 ? new
+
                                 {
+
                                     kpis = new
+
                                     {
+
                                         totalVendors =
+
                                             oracleVendorCount,
+
+
 
                                         activePortalUsers =
+
                                             activePortalUserIds.Count,
 
+
+
                                         pendingVendorAccess =
+
                                             pendingVendorRequests.Count,
 
+
+
                                         onboardedThisFiscalYear
+
                                     },
+
+
 
                                     accessStatus = new
+
                                     {
+
                                         total =
+
                                             oracleVendorCount,
 
+
+
                                         portalEnabled =
+
                                             portalEnabledVendorCount,
 
+
+
                                         notEnabled =
+
                                             Math.Max(
+
                                                 0,
+
                                                 oracleVendorCount - portalEnabledVendorCount)
+
                                     },
+
+
 
                                     onboardingTrend,
 
+
+
                                     pendingVendorRequests,
+
+
 
                                     recentlyOnboardedVendors,
 
+
+
                                     vendorAccess =
+
                                         vendorAccessRows
+
                                 }
+
                                 : null,
 
+
+
                         admin =
+
                             current.IsAdmin
+
                                 ? new
+
                                 {
+
                                     kpis = new
+
                                     {
+
                                         totalUsers =
+
                                             users.Count,
 
+
+
                                         userRoles =
+
                                             roles.Count,
 
+
+
                                         totalVendors =
+
                                             oracleVendorCount,
 
+
+
                                         totalInvoices =
+
                                             invoices.Count,
 
+
+
                                         integrationErrors =
+
                                             integrationRows.Count(
+
                                                 x =>
+
                                                     x.Status.Equals(
+
                                                         "FAILED",
+
                                                         StringComparison.OrdinalIgnoreCase))
+
                                     },
+
+
 
                                     roleDistribution,
 
+
+
                                     userTrend,
+
+
 
                                     recentActivities,
 
+
+
                                     recentUsers,
 
+
+
                                     recentVendors =
+
                                         vendorAccessRows.Take(100),
 
+
+
                                     integrationQueue =
+
                                         integrationSummary
+
                                 }
+
                                 : null
+
                     });
+
             })
+
             .RequireAuthorization();
 
+
+
         return app;
+
     }
 
+
+
     private sealed record IntegrationQueueItem(
+
         Guid Id,
+
         string EventType,
+
         Guid AggregateId,
+
         string Status,
+
         int AttemptCount,
+
         string? LastError,
+
         DateTimeOffset CreatedAt,
+
         DateTimeOffset? ProcessedAt,
+
         string? ExternalReference,
+
         long? OracleRequestId,
+
         string? OracleGroupId);
 
+
+
     private sealed record AuditDashboardItem(
+
         long Id,
+
         Guid? UserId,
+
         string Action,
+
         string EntityType,
+
         Guid? EntityId,
+
         DateTimeOffset CreatedAt);
+
 }

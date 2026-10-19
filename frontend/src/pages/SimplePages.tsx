@@ -1,3 +1,4 @@
+import { RecordsPagination, useRecordsPagination } from "../components/RecordsPagination";
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 
@@ -51,6 +52,8 @@ export function DownloadsPage() {
     URL.revokeObjectURL(url);
   }
 
+  const recordsPaging = useRecordsPagination(rows.length);
+
   return (
     <div className="page-card">
       <h2>Downloads</h2>
@@ -73,7 +76,7 @@ export function DownloadsPage() {
         </thead>
 
         <tbody>
-          {rows.map((row) => (
+          {rows.slice(recordsPaging.start, recordsPaging.end).map((row) => (
             <tr key={row.id}>
               <td>{row.invoiceNumber}</td>
 
@@ -121,6 +124,7 @@ export function DownloadsPage() {
           )}
         </tbody>
       </table>
+      <RecordsPagination total={rows.length} page={recordsPaging.page} pages={recordsPaging.pages} onPage={recordsPaging.setPage} noun="documents" />
     </div>
   );
 }

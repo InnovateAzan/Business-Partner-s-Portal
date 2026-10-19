@@ -90,7 +90,18 @@ export interface OracleInvoice {
   receiptDate?:string|null;
 }
 
+export interface SubmittedInvoiceLine {
+  poNumber: string;
+  grnNumber: string;
+  poLineNumber: number;
+  itemDescription?: string | null;
+  submittedQuantity: number;
+  unitPrice: number;
+  amount: number;
+}
+
 export interface PortalInvoice {
+  submittedLines?: SubmittedInvoiceLine[];
   id:string;
   invoiceNumber:string;
   invoiceDate?:string|null;

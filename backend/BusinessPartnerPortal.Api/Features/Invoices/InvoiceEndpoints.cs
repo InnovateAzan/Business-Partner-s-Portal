@@ -100,6 +100,7 @@ public static class InvoiceEndpoints
                 Guid id,
                 CurrentUser current,
                 AppDbContext db,
+                OracleService oracle,
                 CancellationToken ct) =>
             {
                 var vendorId =
@@ -121,9 +122,59 @@ public static class InvoiceEndpoints
                         404,
                         "Invoice not found.");
 
+                // Use the saved allocations: these are the exact receipt lines
+                // selected for this invoice, not all lines currently on the PO.
+                var allocations = await db.InvoiceLineGrnAllocations
+                    .AsNoTracking()
+                    .Where(x => x.InvoiceId == invoice.Id)
+                    .OrderBy(x => x.PoNumber)
+                    .ThenBy(x => x.PoLineNumber)
+                    .ToListAsync(ct);
+
+                var descriptions = new Dictionary<(string Po, long LineId), string?>();
+                var oracleVendorIdText = await db.Vendors
+                    .Where(x => x.Id == invoice.VendorId)
+                    .Select(x => x.OracleVendorId)
+                    .FirstOrDefaultAsync(ct);
+
+                if (decimal.TryParse(oracleVendorIdText, out var oracleVendorId))
+                {
+                    foreach (var po in allocations.Select(x => x.PoNumber).Distinct())
+                    {
+                        try
+                        {
+                            var poRows = await oracle.GetPoGrnsAsync(oracleVendorId, po, ct);
+                            foreach (var poRow in poRows)
+                            {
+                                if (long.TryParse(poRow.PoLineId, out var poLineId))
+                                {
+                                    descriptions[(po, poLineId)] = poRow.ItemDescription;
+                                }
+                            }
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            // Historical invoice details must remain accessible
+                            // even when Oracle's live PO view is unavailable.
+                        }
+                    }
+                }
+
+                var submittedLines = allocations.Select(x => new
+                {
+                    x.PoNumber,
+                    x.GrnNumber,
+                    x.PoLineNumber,
+                    itemDescription = descriptions.GetValueOrDefault((x.PoNumber, x.PoLineId)),
+                    submittedQuantity = x.AllocatedQuantity,
+                    x.UnitPrice,
+                    amount = x.AllocatedAmount
+                }).ToList();
+
                 return Results.Ok(
                     new
                     {
+                        submittedLines,
                         invoice.Id,
                         invoice.InvoiceNumber,
                         invoice.InvoiceDate,

@@ -107,15 +107,31 @@ public sealed class OracleApInvoiceService(
             );
         }
 
-        // A host can stop after staging the interface row but before the portal
-        // records the result.  Never create a second interface row in that case.
+        // A previous REJECTED interface attempt can be safely replaced on a
+        // deliberate resubmission. Pending/unprocessed attempts must never be
+        // duplicated because APXIIMPT may still be processing them.
         var existingInterface = await GetInterfaceOutcomeAsync(invoice.VendorId, invoice.InvoiceNumber, ct);
         if (existingInterface.InterfaceInvoiceId.HasValue)
         {
-            if (string.Equals(existingInterface.InterfaceStatus, "REJECTED", StringComparison.OrdinalIgnoreCase) || existingInterface.Rejections.Count > 0)
-                throw new OracleApRejectedException(existingInterface.Rejections.Count > 0 ? existingInterface.Rejections : new[] { "Oracle AP interface status is REJECTED." }, null, existingInterface.InterfaceInvoiceId);
+            var isRejected =
+                string.Equals(existingInterface.InterfaceStatus, "REJECTED", StringComparison.OrdinalIgnoreCase)
+                || existingInterface.Rejections.Count > 0;
 
-            throw new OracleApPendingException(existingInterface.InterfaceInvoiceId.Value, existingInterface.InterfaceStatus);
+            if (!isRejected)
+                throw new OracleApPendingException(existingInterface.InterfaceInvoiceId.Value, existingInterface.InterfaceStatus);
+
+            if (!invoice.IsResubmission)
+                throw new OracleApRejectedException(
+                    existingInterface.Rejections.Count > 0
+                        ? existingInterface.Rejections
+                        : new[] { "Oracle AP interface status is REJECTED." },
+                    null,
+                    existingInterface.InterfaceInvoiceId);
+
+            logger.LogInformation(
+                "Retrying rejected Oracle AP interface invoice. PreviousInterfaceId={InterfaceId}, InvoiceNumber={InvoiceNumber}",
+                existingInterface.InterfaceInvoiceId.Value,
+                invoice.InvoiceNumber);
         }
 
         var supplier =
@@ -405,6 +421,7 @@ public sealed class OracleApInvoiceService(
                     (
                         INVOICE_ID,
                         INVOICE_NUM,
+                        PO_NUMBER,
                         VENDOR_ID,
                         VENDOR_SITE_ID,
                         INVOICE_AMOUNT,
@@ -433,6 +450,7 @@ public sealed class OracleApInvoiceService(
                     (
                         :invoice_id,
                         :invoice_num,
+                        :po_number,
                         :vendor_id,
                         :vendor_site_id,
                         :invoice_amount,
@@ -461,6 +479,7 @@ public sealed class OracleApInvoiceService(
 
                 Add(command, "invoice_id", OracleDbType.Int64, invoiceId);
                 Add(command, "invoice_num", OracleDbType.Varchar2, invoice.InvoiceNumber);
+                Add(command, "po_number", OracleDbType.Varchar2, invoice.PoNumber);
                 Add(command, "vendor_id", OracleDbType.Decimal, invoice.VendorId);
                 Add(command, "vendor_site_id", OracleDbType.Int64, vendorSiteId);
                 Add(command, "invoice_amount", OracleDbType.Decimal, invoice.InvoiceAmount);
@@ -899,14 +918,36 @@ public sealed class OracleApInvoiceService(
                 rsl.item_id,
                 rsl.item_description,
 
-                NVL(
-                    rt.quantity,
+                /* Net quantity for this RECEIVE transaction after
+                   RETURN TO VENDOR descendants in the RCV transaction tree. */
+                GREATEST(
+                    NVL(rt.quantity, 0)
+                    - NVL(
+                        (
+                            SELECT SUM(NVL(ret.quantity, 0))
+                            FROM rcv_transactions ret
+                            WHERE ret.transaction_type = 'RETURN TO VENDOR'
+                            START WITH ret.transaction_id = rt.transaction_id
+                            CONNECT BY NOCYCLE PRIOR ret.transaction_id = ret.parent_transaction_id
+                        ),
+                        0
+                    ),
                     0
                 ) AS received_quantity,
 
                 GREATEST(
-                    NVL(
-                        rt.quantity,
+                    GREATEST(
+                        NVL(rt.quantity, 0)
+                        - NVL(
+                            (
+                                SELECT SUM(NVL(ret.quantity, 0))
+                                FROM rcv_transactions ret
+                                WHERE ret.transaction_type = 'RETURN TO VENDOR'
+                                START WITH ret.transaction_id = rt.transaction_id
+                                CONNECT BY NOCYCLE PRIOR ret.transaction_id = ret.parent_transaction_id
+                            ),
+                            0
+                        ),
                         0
                     )
                     -
@@ -1342,31 +1383,29 @@ public sealed class OracleApInvoiceService(
                     x.ExtendedAmount
             );
 
-        var tolerance =
-            GetDecimal(
-                "ORACLE_AP_AMOUNT_TOLERANCE",
-                1.00m
-            );
-
-        var difference =
-            Math.Abs(
-                invoice.InvoiceAmount -
-                calculatedAmount
-            );
-
-        if (
-            difference >
-            tolerance
-        )
+        // Oracle AP requires the header amount to equal the sum of its item
+        // lines at currency precision. A 1.00 tolerance previously allowed
+        // a 0.36 difference through, causing AMOUNT EXCEEDS PRECISION.
+        // Never silently change a supplier-entered invoice amount.
+        var headerAmount = decimal.Round(invoice.InvoiceAmount, 2, MidpointRounding.AwayFromZero);
+        var linesAmount = decimal.Round(calculatedAmount, 2, MidpointRounding.AwayFromZero);
+        if (invoice.InvoiceAmount != headerAmount || calculatedAmount != linesAmount)
         {
             throw new OracleApBusinessException(
-                $"Invoice amount {invoice.InvoiceAmount:N2} does not match " +
-                $"the selected GRN receipt-line value {calculatedAmount:N2}. " +
-                $"Difference {difference:N2} exceeds configured tolerance " +
-                $"{tolerance:N2}. Line-level allocation is required instead " +
-                $"of guessing the split."
-            );
+                $"Invoice/GRN amounts contain more than two decimal places. " +
+                $"Header={invoice.InvoiceAmount}, GRN lines={calculatedAmount}. " +
+                "Correct the amount or line allocation before Oracle submission.");
         }
+
+        if (headerAmount != linesAmount)
+        {
+            throw new OracleApBusinessException(
+                $"Invoice amount {headerAmount:N2} does not exactly match " +
+                $"selected GRN receipt-line total {linesAmount:N2}. " +
+                $"Difference {Math.Abs(headerAmount - linesAmount):N2}. " +
+                "Correct the invoice amount or selected receipt lines before submission.");
+        }
+
     }
 
     // ============================================================
@@ -1658,10 +1697,14 @@ public sealed class OracleApInvoiceService(
         command.BindByName = true;
         command.CommandText = """
             SELECT invoice_id, status
-            FROM ap_invoices_interface
-            WHERE vendor_id = :vendor_id
-              AND UPPER(TRIM(invoice_num)) = UPPER(TRIM(:invoice_num))
-              AND ROWNUM = 1
+            FROM (
+                SELECT invoice_id, status
+                FROM ap_invoices_interface
+                WHERE vendor_id = :vendor_id
+                  AND UPPER(TRIM(invoice_num)) = UPPER(TRIM(:invoice_num))
+                ORDER BY invoice_id DESC
+            )
+            WHERE ROWNUM = 1
             """;
         Add(command, "vendor_id", OracleDbType.Decimal, vendorId);
         Add(command, "invoice_num", OracleDbType.Varchar2, invoiceNumber);
@@ -2737,79 +2780,87 @@ public sealed class OracleApInvoiceService(
         string source,
         CancellationToken ct)
     {
-        await using (
-            var lineCommand =
-                connection.CreateCommand()
-        )
+        // The cleanup is performed inside the same transaction as the new
+        // interface inserts. Never remove a pending/running or imported invoice.
+        // Only this portal's rejected interface attempts may be replaced.
+        var rejectedIds = new List<long>();
+        await using (var lookup = connection.CreateCommand())
         {
-            Configure(lineCommand);
-            lineCommand.Transaction =
-                transaction;
-
-            lineCommand.BindByName =
-                true;
-
-            lineCommand.CommandText =
-                """
-                DELETE FROM
-                    ap_invoice_lines_interface
-
-                WHERE
-                    invoice_id IN
-                    (
-                        SELECT
-                            invoice_id
-                        FROM
-                            ap_invoices_interface
-                        WHERE
-                            vendor_id = :vendor_id
-                        AND
-                            UPPER(TRIM(invoice_num)) =
-                            UPPER(TRIM(:invoice_num))
-                        AND
-                            UPPER(TRIM(source)) =
-                            UPPER(TRIM(:source))
-                    )
+            Configure(lookup);
+            lookup.Transaction = transaction;
+            lookup.BindByName = true;
+            lookup.CommandText = """
+                SELECT ai.invoice_id
+                  FROM ap_invoices_interface ai
+                 WHERE ai.vendor_id = :vendor_id
+                   AND UPPER(TRIM(ai.invoice_num)) = UPPER(TRIM(:invoice_num))
+                   AND UPPER(TRIM(ai.source)) = UPPER(TRIM(:source))
+                   AND (UPPER(TRIM(NVL(ai.status, ' '))) = 'REJECTED'
+                        OR EXISTS (
+                            SELECT 1 FROM ap_interface_rejections air
+                             WHERE (air.parent_table = 'AP_INVOICES_INTERFACE'
+                                    AND air.parent_id = ai.invoice_id)
+                                OR (air.parent_table = 'AP_INVOICE_LINES_INTERFACE'
+                                    AND air.parent_id IN (
+                                        SELECT ail.invoice_line_id
+                                          FROM ap_invoice_lines_interface ail
+                                         WHERE ail.invoice_id = ai.invoice_id))))
+                 FOR UPDATE
                 """;
-
-            Add(lineCommand, "vendor_id", OracleDbType.Decimal, vendorId);
-            Add(lineCommand, "invoice_num", OracleDbType.Varchar2, invoiceNumber);
-            Add(lineCommand, "source", OracleDbType.Varchar2, source);
-
-            await lineCommand.ExecuteNonQueryAsync(ct);
+            Add(lookup, "vendor_id", OracleDbType.Decimal, vendorId);
+            Add(lookup, "invoice_num", OracleDbType.Varchar2, invoiceNumber);
+            Add(lookup, "source", OracleDbType.Varchar2, source);
+            await using var reader = await lookup.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                rejectedIds.Add(Convert.ToInt64(reader.GetValue(0)));
         }
 
-        await using (
-            var headerCommand =
-                connection.CreateCommand()
-        )
+        foreach (var id in rejectedIds)
         {
-            Configure(headerCommand);
-            headerCommand.Transaction =
-                transaction;
+            // Remove the rejection details first; preserve every other invoice.
+            await using (var rejectCommand = connection.CreateCommand())
+            {
+                Configure(rejectCommand);
+                rejectCommand.Transaction = transaction;
+                rejectCommand.BindByName = true;
+                rejectCommand.CommandText = """
+                    DELETE FROM ap_interface_rejections air
+                     WHERE (air.parent_table = 'AP_INVOICES_INTERFACE'
+                            AND air.parent_id = :invoice_id)
+                        OR (air.parent_table = 'AP_INVOICE_LINES_INTERFACE'
+                            AND air.parent_id IN (
+                                SELECT invoice_line_id
+                                  FROM ap_invoice_lines_interface
+                                 WHERE invoice_id = :invoice_id))
+                    """;
+                Add(rejectCommand, "invoice_id", OracleDbType.Int64, id);
+                await rejectCommand.ExecuteNonQueryAsync(ct);
+            }
 
-            headerCommand.BindByName =
-                true;
+            await using (var lineCommand = connection.CreateCommand())
+            {
+                Configure(lineCommand);
+                lineCommand.Transaction = transaction;
+                lineCommand.BindByName = true;
+                lineCommand.CommandText =
+                    "DELETE FROM ap_invoice_lines_interface WHERE invoice_id = :invoice_id";
+                Add(lineCommand, "invoice_id", OracleDbType.Int64, id);
+                await lineCommand.ExecuteNonQueryAsync(ct);
+            }
 
-            headerCommand.CommandText =
-                """
-                DELETE FROM
-                    ap_invoices_interface
-                WHERE
-                    vendor_id = :vendor_id
-                AND
-                    UPPER(TRIM(invoice_num)) =
-                    UPPER(TRIM(:invoice_num))
-                AND
-                    UPPER(TRIM(source)) =
-                    UPPER(TRIM(:source))
-                """;
+            await using (var headerCommand = connection.CreateCommand())
+            {
+                Configure(headerCommand);
+                headerCommand.Transaction = transaction;
+                headerCommand.BindByName = true;
+                headerCommand.CommandText =
+                    "DELETE FROM ap_invoices_interface WHERE invoice_id = :invoice_id";
+                Add(headerCommand, "invoice_id", OracleDbType.Int64, id);
+                await headerCommand.ExecuteNonQueryAsync(ct);
+            }
 
-            Add(headerCommand, "vendor_id", OracleDbType.Decimal, vendorId);
-            Add(headerCommand, "invoice_num", OracleDbType.Varchar2, invoiceNumber);
-            Add(headerCommand, "source", OracleDbType.Varchar2, source);
-
-            await headerCommand.ExecuteNonQueryAsync(ct);
+            logger.LogInformation(
+                "Removed rejected Oracle AP interface attempt for resubmission. InterfaceInvoiceId={InterfaceId}", id);
         }
     }
 

@@ -331,6 +331,10 @@ public static class AdminEndpoints
 
                 var users =
                     await db.Users
+                        .Where(x =>
+                            x.UserType != "VENDOR" ||
+                            db.VendorUsers.Any(mapping =>
+                                mapping.UserId == x.Id))
                         .OrderBy(
                             x =>
                                 x.FullName)

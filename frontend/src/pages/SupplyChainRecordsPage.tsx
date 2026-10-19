@@ -289,7 +289,7 @@ export function SupplyChainRecordsPage({
     setPage,
   ] = useState(1);
 
-  const pageSize = 15;
+  const pageSize = 10;
 
   useEffect(() => {
     if (!dateFilterOpen) {

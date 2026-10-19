@@ -1,3 +1,4 @@
+import { RecordsPagination, useRecordsPagination } from "../components/RecordsPagination";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { getAuditLogs } from "../api/portal";
@@ -54,6 +55,8 @@ export function UserManagementPage() {
       );
     }
   }
+
+  const recordsPaging = useRecordsPagination(rows.length, []);
 
   return (
     <div className="page-card">
@@ -171,7 +174,7 @@ export function UserManagementPage() {
         </thead>
 
         <tbody>
-          {rows.map((x) => (
+          {rows.slice(recordsPaging.start, recordsPaging.end).map((x) => (
             <tr key={x.id}>
               <td>{x.fullName}</td>
               <td>{x.email}</td>
@@ -198,6 +201,7 @@ export function UserManagementPage() {
           ))}
         </tbody>
       </table>
+        <RecordsPagination total={rows.length} page={recordsPaging.page} pages={recordsPaging.pages} onPage={recordsPaging.setPage} noun="users" />
     </div>
   );
 }
@@ -216,6 +220,8 @@ export function VendorAccessPage() {
   useEffect(() => {
     load();
   }, []);
+
+  const recordsPaging = useRecordsPagination(rows.length, []);
 
   return (
     <div className="page-card">
@@ -250,7 +256,7 @@ export function VendorAccessPage() {
         </thead>
 
         <tbody>
-          {rows.map((x) => (
+          {rows.slice(recordsPaging.start, recordsPaging.end).map((x) => (
             <tr
               key={`${x.vendorId}-${x.userId}`}
             >
@@ -313,6 +319,7 @@ export function VendorAccessPage() {
           ))}
         </tbody>
       </table>
+        <RecordsPagination total={rows.length} page={recordsPaging.page} pages={recordsPaging.pages} onPage={recordsPaging.setPage} noun="vendors" />
     </div>
   );
 }
@@ -525,6 +532,8 @@ export function AuditPage() {
         )
       );
     };
+
+  const recordsPaging = useRecordsPagination(filteredRows.length, [search, fromDate, toDate]);
 
   return (
     <div className="page-card audit-log-page">
@@ -816,7 +825,7 @@ export function AuditPage() {
           </thead>
 
           <tbody>
-            {filteredRows.map(
+            {filteredRows.slice(recordsPaging.start, recordsPaging.end).map(
               (x: any) => (
                 <tr key={x.id}>
                   <td>
@@ -872,6 +881,7 @@ export function AuditPage() {
             )}
           </tbody>
         </table>
+        <RecordsPagination total={filteredRows.length} page={recordsPaging.page} pages={recordsPaging.pages} onPage={recordsPaging.setPage} noun="audit logs" />
       </div>
     </div>
   );

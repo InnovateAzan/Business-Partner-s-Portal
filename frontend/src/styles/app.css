@@ -6148,3 +6148,206 @@ td {
     flex-basis: 44px !important;
   }
 }
+
+/* Login reference design: scoped to login page only */
+.login-reference-page{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:radial-gradient(900px 500px at 8% 0%,#c9ebd7,transparent 60%),radial-gradient(800px 500px at 100% 100%,#d7f0e0,transparent 60%),#eaf5ee;font-family:"Plus Jakarta Sans","Segoe UI",Arial,sans-serif;color:#101828}
+.login-reference-page *{box-sizing:border-box}
+.login-reference-card{width:100%;max-width:1040px;min-height:660px;display:grid;grid-template-columns:1fr 1fr;background:#fff;border-radius:28px;overflow:hidden;box-shadow:0 30px 80px rgba(0,80,40,.18);position:relative}
+.login-reference-left{min-height:660px;padding:30px 40px 0;position:relative;display:flex;flex-direction:column;overflow:hidden;border-right:none}
+.login-reference-dots{position:absolute;top:23px;left:25px;width:60px;height:60px;background:radial-gradient(circle,#00843d 2px,transparent 2.5px) 0 0/20px 20px;opacity:.2}
+.login-reference-logo{width:76px;height:76px;margin:0 auto 24px;border-radius:50%;background:#fff;box-shadow:0 0 0 6px rgba(0,132,61,.08),0 8px 24px rgba(0,132,61,.2);z-index:1}
+.login-reference-logo img{width:100%;height:100%;object-fit:contain;border-radius:50%}
+.login-reference-copy{position:relative;z-index:1}
+.login-reference-welcome{font-size:19px;margin:0 0 4px;color:#101828}
+.login-reference-copy h1{font-size:34px;line-height:1.1;font-weight:800;letter-spacing:-.5px;color:#00843d;margin:0 0 16px}
+.login-reference-description{font-size:14px;line-height:1.6;max-width:340px;color:#667085;margin:0}
+.login-reference-hero{flex:1;position:relative;min-height:300px;margin:6px -40px 0;overflow:hidden}
+.login-reference-hero img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 65%;-webkit-mask-image:linear-gradient(to right,transparent 0%,rgba(0,0,0,.45) 3%,#000 11%,#000 89%,rgba(0,0,0,.45) 97%,transparent 100%),linear-gradient(to bottom,transparent 0%,rgba(0,0,0,.45) 5%,#000 17%,#000 86%,rgba(0,0,0,.5) 95%,transparent 100%);-webkit-mask-composite:source-in;mask-image:linear-gradient(to right,transparent 0%,rgba(0,0,0,.45) 3%,#000 11%,#000 89%,rgba(0,0,0,.45) 97%,transparent 100%),linear-gradient(to bottom,transparent 0%,rgba(0,0,0,.45) 5%,#000 17%,#000 86%,rgba(0,0,0,.5) 95%,transparent 100%);mask-composite:intersect}
+.login-reference-hero .login-reference-hero-glow{filter:blur(8px) saturate(1.05);opacity:.18;transform:scale(1.04)}
+.login-reference-bottom-bar{position:absolute;bottom:0;left:0;width:100%;height:5px;background:#00843d}
+.login-reference-right{display:flex;flex-direction:column;justify-content:center;padding:36px 48px;min-width:0}
+.login-reference-secure{align-self:center;display:inline-flex;align-items:center;gap:8px;padding:9px 16px;margin-bottom:28px;border-radius:10px;background:#e6f4ec;color:#00843d;font-size:12px;font-weight:700;box-shadow:0 2px 10px rgba(0,132,61,.12)}
+.login-reference-right h2{font-size:36px;line-height:1.15;font-weight:800;color:#101828;margin:0 0 5px;letter-spacing:-.5px}
+.login-reference-lead{color:#667085;font-size:15px;margin:0 0 28px}
+.login-reference-form{display:flex;flex-direction:column}
+.login-reference-form>label{font-size:13px;font-weight:700;color:#101828;margin:0 0 8px}
+.login-reference-input{height:52px;display:flex;align-items:center;overflow:hidden;background:#e8f0fe;border:1px solid #d0d5dd;border-radius:12px;margin-bottom:20px}
+.login-reference-input:focus-within{border-color:#00843d;box-shadow:0 0 0 3px rgba(0,132,61,.15)}
+.login-reference-icon{width:48px;min-width:48px;height:100%;display:grid;place-items:center;background:#fff;color:#00843d}
+.login-reference-input input{min-width:0;flex:1;width:100%;height:100%;border:0;outline:0;background:#e8f0fe;color:#101828;padding:0 12px;font-size:15px}
+.login-reference-eye{width:48px;min-width:48px;height:100%;display:grid;place-items:center;background:#fff;border:0;color:#667085;cursor:pointer}
+.login-reference-forgot{align-self:flex-end;border:0;background:none;padding:0;margin:-6px 0 22px;color:#00843d;font-size:13px;font-weight:700;cursor:pointer}
+.login-reference-forgot:hover{text-decoration:underline}
+.login-reference-submit{height:52px;border:0;border-radius:12px;display:flex;align-items:center;justify-content:center;gap:10px;background:linear-gradient(135deg,#00a04a,#00843d 55%,#006b32);box-shadow:0 10px 24px rgba(0,132,61,.3);color:white;font-size:15px;font-weight:700;cursor:pointer}
+.login-reference-submit:disabled{opacity:.7;cursor:wait}
+.login-reference-error{color:#c73535;background:#fff0f0;border:1px solid #f7caca;padding:10px;border-radius:8px;font-size:13px;margin:0 0 12px}
+.login-reference-note{display:flex;align-items:center;gap:14px;background:#f2f5f3;border:1px solid #dbe9df;border-radius:14px;padding:18px;margin-top:28px;color:#667085;font-size:13px}
+.login-reference-note svg{flex-shrink:0;color:#00843d}
+@media(max-width:860px){.login-reference-card{grid-template-columns:1fr}.login-reference-left{min-height:0;padding:28px 24px 0}.login-reference-hero{min-height:200px;margin:10px -24px 0}.login-reference-right{padding:28px 24px 36px}.login-reference-copy h1{font-size:28px}.login-reference-right h2{font-size:30px}}
+
+
+/* Login page branding refinements - 08 Oct 2026 */
+/* Full-width bottom green rule, across both panels */
+.login-reference-card::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 5px;
+  background: #00843d;
+  z-index: 5;
+  pointer-events: none;
+}
+.login-reference-bottom-bar { display: none !important; }
+/* Logo has a pure white background, no mint ring or glow */
+.login-reference-brand {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  align-self: center;
+  margin: 0 auto 22px;
+}
+.login-reference-brand .login-reference-logo {
+  width: 96px;
+  height: 96px;
+  margin: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: none;
+  display: grid;
+  place-items: center;
+}
+.login-reference-brand .login-reference-logo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 50%;
+}
+.login-reference-brand-name {
+  margin-top: 6px;
+  color: #009B4D;
+  font-size: 19px;
+  font-weight: 850;
+  line-height: 1.15;
+  letter-spacing: .25px;
+  text-align: center;
+  white-space: nowrap;
+}
+/* Neat top-left 3 by 3 dot matrix */
+.login-reference-dots {
+  top: 30px;
+  left: 28px;
+  width: 58px;
+  height: 58px;
+  background-image: radial-gradient(circle, #cce9db 3px, transparent 3.4px);
+  background-size: 20px 20px;
+  background-position: 0 0;
+  opacity: 1;
+  pointer-events: none;
+}
+@media (max-width: 860px) {
+  .login-reference-brand { margin-bottom: 20px; }
+  .login-reference-brand .login-reference-logo { width: 82px; height: 82px; }
+  .login-reference-brand-name { font-size: 17px; }
+}
+/* Pakistan Cables Brand Theme */
+:root {
+  --login-brand-green: #008C45;
+  --login-brand-green-dark: #007A3D;
+  --login-brand-green-light: #E8F5EE;
+}
+
+/* Welcome heading */
+.login-page h1,
+.login-page .brand-title {
+  color: var(--login-brand-green);
+}
+
+/* Pakistan Cables name */
+.login-brand-name {
+  color: var(--login-brand-green);
+}
+
+/* Sign In button */
+.login-page button[type="submit"] {
+  background: var(--login-brand-green);
+  border-color: var(--login-brand-green);
+  color: white;
+}
+
+.login-page button[type="submit"]:hover {
+  background: var(--login-brand-green-dark);
+}
+
+/* Forgot Password */
+.login-page .forgot-password {
+  color: var(--login-brand-green);
+}
+
+/* Secure Vendor Portal badge */
+.login-page .secure-badge {
+  color: var(--login-brand-green);
+  background: var(--login-brand-green-light);
+}
+
+/* Decorative dots */
+.login-page .decorative-dot {
+  background: var(--login-brand-green);
+  opacity: 0.2;
+}
+
+/* Bottom green line */
+.login-page .bottom-accent {
+  background: var(--login-brand-green);
+}
+
+/* Input icons */
+.login-page .input-icon {
+  color: var(--login-brand-green);
+}
+
+/* Information box icon */
+.login-page .info-icon {
+  color: var(--login-brand-green);
+}
+/* Same green color for both headings */
+.login-brand-name,
+.login-page .brand-title,
+.login-page h1 {
+  color: #008C45 !important;
+  -webkit-text-fill-color: #008C45 !important;
+  background-image: none !important;
+}
+/* Match both headings with Pakistan Cables logo green */
+.login-brand-name,
+.login-page .brand-title,
+.login-page h1 {
+  color: #009B4D !important;
+  -webkit-text-fill-color: #009B4D !important;
+  background: none !important;
+  text-shadow: none !important;
+}
+
+/* Shared modal/dialog close-button hover styling.
+   Scoped to close actions so normal buttons and navigation are unaffected. */
+button[aria-label="Close"]:hover,
+button[aria-label="Close details"]:hover,
+button[aria-label="Close vendor profile"]:hover,
+button[title="Close"]:hover,
+button[title="Close modal"]:hover {
+  background-color: #fee2e2 !important;
+  color: #dc2626 !important;
+  border-color: #fecaca !important;
+}
+button[aria-label="Close"],
+button[aria-label="Close details"],
+button[aria-label="Close vendor profile"],
+button[title="Close"],
+button[title="Close modal"] {
+  transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease;
+}

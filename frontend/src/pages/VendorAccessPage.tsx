@@ -281,15 +281,7 @@ export function VendorAccessPage() {
   // ROW ACTION
   // ============================================================
 
-  const [
-    openMenuVendorId,
-    setOpenMenuVendorId,
-  ] =
-    useState<
-      string | null
-    >(null);
-
-  const [
+const [
     deleteRow,
     setDeleteRow,
   ] =
@@ -373,51 +365,6 @@ export function VendorAccessPage() {
     loadExistingAccess();
   }, []);
 
-  // ============================================================
-  // CLOSE ROW ACTION MENU ON OUTSIDE CLICK
-  // ============================================================
-
-  useEffect(() => {
-    function handleOutsideActionMenuClick(
-      event: MouseEvent
-    ) {
-      const target =
-        event.target as HTMLElement;
-
-      if (
-        !target.closest(
-          ".vendor-row-menu"
-        )
-        &&
-        !target.closest(
-          ".vendor-more-btn"
-        )
-      ) {
-        setOpenMenuVendorId(
-          null
-        );
-      }
-    }
-
-    document.addEventListener(
-      "mousedown",
-      handleOutsideActionMenuClick
-    );
-
-    function closeActionMenu() {
-      setOpenMenuVendorId(null);
-    }
-
-    window.addEventListener("scroll", closeActionMenu, true);
-
-    return () => {
-      document.removeEventListener(
-        "mousedown",
-        handleOutsideActionMenuClick
-      );
-      window.removeEventListener("scroll", closeActionMenu, true);
-    };
-  }, []);
 
   // ============================================================
   // DRAWER
@@ -815,7 +762,6 @@ export function VendorAccessPage() {
   // ============================================================
 
   function openEditVendor(row: ExistingVendorAccess) {
-    setOpenMenuVendorId(null);
     setPageError("");
     setPageSuccess("");
     setEditRow(row);
@@ -903,9 +849,6 @@ export function VendorAccessPage() {
   async function toggleAccess(
     row: ExistingVendorAccess
   ) {
-    setOpenMenuVendorId(
-      null
-    );
 
     setPageError("");
 
@@ -945,7 +888,6 @@ export function VendorAccessPage() {
   async function unlockAccount(
     row: ExistingVendorAccess
   ) {
-    setOpenMenuVendorId(null);
     setPageError("");
     setPageSuccess("");
 
@@ -969,7 +911,6 @@ export function VendorAccessPage() {
   }
 
   async function resendSetupEmail(row: ExistingVendorAccess) {
-    setOpenMenuVendorId(null);
     if (!window.confirm(`Send a password setup email to ${row.email}?`)) return;
     setPageError("");
     setPageSuccess("");
@@ -1025,6 +966,13 @@ export function VendorAccessPage() {
   // ============================================================
   // RENDER
   // ============================================================
+
+  const [vendorPage, setVendorPage] = useState(1);
+  const vendorPageCount = Math.max(1, Math.ceil(filteredAccessRows.length / 10));
+  const safeVendorPage = Math.min(vendorPage, vendorPageCount);
+  const visibleVendorRows = filteredAccessRows.slice((safeVendorPage - 1) * 10, safeVendorPage * 10);
+
+  useEffect(() => { setVendorPage(1); }, [statusFilter]);
 
   return (
     <>
@@ -1140,7 +1088,7 @@ export function VendorAccessPage() {
                 </thead>
 
                 <tbody>
-                  {filteredAccessRows.map(
+                  {visibleVendorRows.map(
                     (row) => (
                       <tr
                         key={`${row.vendorId}-${row.userId}`}
@@ -1186,40 +1134,11 @@ export function VendorAccessPage() {
                         <td className="vendor-action-cell">
                           <button
                             type="button"
-                            className="vendor-more-btn"
-                            onClick={(
-                              event
-                            ) => {
-                              event.stopPropagation();
-
-                              setOpenMenuVendorId(
-                                (
-                                  current
-                                ) =>
-                                  current ===
-                                  row.vendorId
-                                    ? null
-                                    : row.vendorId
-                              );
-                            }}
+                            className="table-btn"
+                            onClick={() => openEditVendor(row)}
                           >
-                            ⋮
+                            Edit
                           </button>
-
-                          {openMenuVendorId ===
-                            row.vendorId && (
-                            <div
-                              className="vendor-row-menu"
-                              onMouseDown={(event) => event.stopPropagation()}
-                            >
-                              <button
-                                type="button"
-                                onClick={() => openEditVendor(row)}
-                              >
-                                Edit
-                              </button>
-                            </div>
-                          )}
                         </td>
                       </tr>
                     )
@@ -1238,14 +1157,13 @@ export function VendorAccessPage() {
                   )}
                 </tbody>
               </table>
-
-              <div className="vendor-table-footer">
-                Showing{" "}
-                {filteredAccessRows.length}{" "}
-                {filteredAccessRows.length ===
-                1
-                  ? "vendor"
-                  : "vendors"}
+              <div className="po-pagination" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 16 }}>
+                <span>Showing {visibleVendorRows.length} of {filteredAccessRows.length} vendors</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <button type="button" className="table-btn" disabled={safeVendorPage <= 1} onClick={() => setVendorPage(safeVendorPage - 1)}>Previous</button>
+                  <span>Page {safeVendorPage} of {vendorPageCount}</span>
+                  <button type="button" className="table-btn" disabled={safeVendorPage >= vendorPageCount} onClick={() => setVendorPage(safeVendorPage + 1)}>Next</button>
+                </div>
               </div>
             </div>
           )}

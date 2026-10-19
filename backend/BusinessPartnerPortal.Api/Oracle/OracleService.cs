@@ -1,1757 +1,3717 @@
 using System.Globalization;
+
 using Oracle.ManagedDataAccess.Client;
+
+
 
 namespace BusinessPartnerPortal.Api.Oracle;
 
+
+
 public sealed class OracleService(
+
     OracleOptions options,
+
     ILogger<OracleService> logger)
+
 {
-    // ============================================================
-    // OPEN ORACLE CONNECTION
+
     // ============================================================
 
+    // OPEN ORACLE CONNECTION
+
+    // ============================================================
+
+
+
     private async Task<OracleConnection> Open(
+
         CancellationToken ct)
+
     {
+
         var connection =
+
             new OracleConnection(
+
                 options.ConnectionString
+
             );
+
+
 
         await connection.OpenAsync(ct);
 
+
+
         return connection;
+
     }
 
-    // ============================================================
-    // TEST CONNECTIVITY
-    // ============================================================
 
-    public async Task<bool> TestConnectivityAsync(
-        CancellationToken ct)
+
+    // Read Oracle AP document sequence and voucher values in batches.
+    public async Task<Dictionary<string, (string? DocSequenceId, string? VoucherNumber)>>
+        GetInvoiceVoucherDetailsAsync(IEnumerable<string> oracleInvoiceIds, CancellationToken ct)
     {
-        await using var connection =
-            await Open(ct);
+        var ids = oracleInvoiceIds
+            .Where(id => !string.IsNullOrWhiteSpace(id) &&
+                         decimal.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+            .Distinct()
+            .ToArray();
 
-        await using var command =
-            connection.CreateCommand();
+        var result = new Dictionary<string, (string? DocSequenceId, string? VoucherNumber)>();
+        if (ids.Length == 0) return result;
 
-        command.CommandText =
-            "SELECT 1 FROM DUAL";
-
-        var result =
-            await command.ExecuteScalarAsync(ct);
-
-        return Convert.ToInt32(result) == 1;
-    }
-
-    // ============================================================
-    // GET SUPPLIER BY ORACLE VENDOR ID
-    // ============================================================
-
-    public async Task<OracleSupplierDto?>
-        GetSupplierByVendorIdAsync(
-            decimal vendorId,
-            CancellationToken ct)
-    {
-        await using var connection =
-            await Open(ct);
-
-        await using var command =
-            connection.CreateCommand();
-
-        command.BindByName = true;
-
-        command.CommandText =
-            """
-            SELECT *
-            FROM APPS.PORTAL_SUPPLIERS_V
-            WHERE VENDOR_ID = :vendorId
-              AND ROWNUM = 1
-            """;
-
-        command.Parameters.Add(
-            "vendorId",
-            OracleDbType.Decimal
-        ).Value = vendorId;
-
-        var rows =
-            await Read(
-                command,
-                ct
-            );
-
-        if (
-            rows.Count == 0
-        )
+        await using var connection = await Open(ct);
+        foreach (var batch in ids.Chunk(900))
         {
-            return null;
-        }
-
-        return MapSupplier(
-            rows[0]
-        );
-    }
-
-    // ============================================================
-    // GET SUPPLIER BY SUPPLIER NUMBER
-    // ============================================================
-
-    public async Task<OracleSupplierDto?>
-        GetSupplierByNumberAsync(
-            string supplierNumber,
-            CancellationToken ct)
-    {
-        await using var connection =
-            await Open(ct);
-
-        await using var command =
-            connection.CreateCommand();
-
-        command.BindByName = true;
-
-        command.CommandText =
-            """
-            SELECT *
-            FROM APPS.PORTAL_SUPPLIERS_V
-            WHERE TRIM(
-                CAST(
-                    SUPPLIER_NUMBER AS VARCHAR2(100)
-                )
-            ) = :supplierNumber
-              AND ROWNUM = 1
-            """;
-
-        command.Parameters.Add(
-            "supplierNumber",
-            OracleDbType.Varchar2
-        ).Value =
-            supplierNumber.Trim();
-
-        var rows =
-            await Read(
-                command,
-                ct
-            );
-
-        if (
-            rows.Count == 0
-        )
-        {
-            return null;
-        }
-
-        return MapSupplier(
-            rows[0]
-        );
-    }
-
-    // ============================================================
-    // GET ALL SUPPLIERS
-    // ============================================================
-
-    public async Task<List<OracleSupplierDto>>
-        GetSuppliersAsync(
-            CancellationToken ct)
-    {
-        await using var connection =
-            await Open(ct);
-
-        await using var command =
-            connection.CreateCommand();
-
-        command.CommandText =
-            """
-            SELECT *
-            FROM APPS.PORTAL_SUPPLIERS_V
-            ORDER BY VENDOR_NAME
-            """;
-
-        var rows =
-            await Read(
-                command,
-                ct
-            );
-
-        return rows
-            .Select(
-                MapSupplier
-            )
-            .ToList();
-    }
-
-    // ============================================================
-    // GET TOTAL ORACLE VENDOR COUNT
-    // ============================================================
-
-    public async Task<int> GetOracleVendorCountAsync(
-        CancellationToken ct)
-    {
-        await using var connection =
-            await Open(ct);
-
-        await using var command =
-            connection.CreateCommand();
-
-        command.CommandText =
-            """
-            SELECT COUNT(DISTINCT VENDOR_ID)
-            FROM APPS.PORTAL_SUPPLIERS_V
-            WHERE VENDOR_ID IS NOT NULL
-            """;
-
-        try
-        {
-            var result =
-                await command.ExecuteScalarAsync(
-                    ct
-                );
-
-            if (
-                result is null ||
-                result == DBNull.Value
-            )
+            await using var command = connection.CreateCommand();
+            command.BindByName = true;
+            var names = new List<string>();
+            for (var index = 0; index < batch.Length; index++)
             {
-                return 0;
+                var name = $"invoiceId{index}";
+                names.Add(":" + name);
+                command.Parameters.Add(name, OracleDbType.Decimal).Value =
+                    decimal.Parse(batch[index], CultureInfo.InvariantCulture);
             }
 
-            return Convert.ToInt32(
-                result
-            );
-        }
-        catch (
-            OracleException ex
-        )
-        {
-            logger.LogError(
-                ex,
-                "Failed to get total Oracle vendor count. OracleError={OracleErrorNumber}",
-                ex.Number
-            );
+            command.CommandText = $@"
+                SELECT invoice_id, doc_sequence_id, doc_sequence_value
+                FROM apps.ap_invoices_all
+                WHERE invoice_id IN ({string.Join(", ", names)})";
 
-            throw;
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                var id = Convert.ToString(reader.GetValue(0), CultureInfo.InvariantCulture);
+                if (id == null) continue;
+                result[id] = (
+                    reader.IsDBNull(1) ? null : Convert.ToString(reader.GetValue(1), CultureInfo.InvariantCulture),
+                    reader.IsDBNull(2) ? null : Convert.ToString(reader.GetValue(2), CultureInfo.InvariantCulture));
+            }
         }
+        return result;
     }
 
-    // ============================================================
-    // SEARCH SUPPLIERS
+    // Batch payment status lookup for Finance / AP invoice records.
+    // This is read-only and uses Oracle's authoritative AP payment flag.
+    public async Task<Dictionary<string, string>> GetInvoicePaymentStatusesAsync(
+        IEnumerable<string> oracleInvoiceIds, CancellationToken ct)
+    {
+        var ids = oracleInvoiceIds
+            .Where(id => !string.IsNullOrWhiteSpace(id) &&
+                decimal.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+            .Distinct().ToArray();
+        var result = new Dictionary<string, string>();
+        if (ids.Length == 0) return result;
+
+        await using var connection = await Open(ct);
+        foreach (var batch in ids.Chunk(900))
+        {
+            await using var command = connection.CreateCommand();
+            command.BindByName = true;
+            var placeholders = new List<string>();
+            for (var i = 0; i < batch.Length; i++)
+            {
+                var parameterName = $"invoiceId{i}";
+                placeholders.Add(":" + parameterName);
+                command.Parameters.Add(parameterName, OracleDbType.Decimal).Value =
+                    decimal.Parse(batch[i], CultureInfo.InvariantCulture);
+            }
+            command.CommandText = $@"
+                SELECT invoice_id, payment_status_flag
+                FROM apps.ap_invoices_all
+                WHERE invoice_id IN ({string.Join(", ", placeholders)})";
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                var id = Convert.ToString(reader.GetValue(0), CultureInfo.InvariantCulture);
+                if (string.IsNullOrEmpty(id)) continue;
+                var flag = reader.IsDBNull(1) ? "" : Convert.ToString(reader.GetValue(1), CultureInfo.InvariantCulture)?.Trim().ToUpperInvariant();
+                result[id] = flag switch
+                {
+                    "Y" => "PAID",
+                    "P" => "PARTIALLY PAID",
+                    "N" => "UNPAID",
+                    _ => "UNKNOWN"
+                };
+            }
+        }
+        return result;
+    }
+
+    // Read current AP pay groups in batches (Oracle IN supports at most 1000 items).
+
+    public async Task<Dictionary<string, string?>> GetInvoicePayGroupsAsync(
+
+        IEnumerable<string> oracleInvoiceIds,
+
+        CancellationToken ct)
+
+    {
+
+        var ids = oracleInvoiceIds
+
+            .Where(id => !string.IsNullOrWhiteSpace(id) &&
+
+                         decimal.TryParse(id, System.Globalization.NumberStyles.Integer,
+
+                             System.Globalization.CultureInfo.InvariantCulture, out _))
+
+            .Distinct()
+
+            .ToArray();
+
+
+
+        var result = new Dictionary<string, string?>();
+
+        if (ids.Length == 0) return result;
+
+
+
+        await using var connection = await Open(ct);
+
+        foreach (var batch in ids.Chunk(900))
+
+        {
+
+            await using var command = connection.CreateCommand();
+
+            command.BindByName = true;
+
+            var names = new List<string>();
+
+            for (var index = 0; index < batch.Length; index++)
+
+            {
+
+                var name = $"invoiceId{index}";
+
+                names.Add(":" + name);
+
+                command.Parameters.Add(name, OracleDbType.Decimal).Value =
+
+                    decimal.Parse(batch[index], System.Globalization.CultureInfo.InvariantCulture);
+
+            }
+
+
+
+            command.CommandText = $@"
+
+                SELECT invoice_id, pay_group_lookup_code
+
+                FROM apps.ap_invoices_all
+
+                WHERE invoice_id IN ({string.Join(", ", names)})";
+
+
+
+            await using var reader = await command.ExecuteReaderAsync(ct);
+
+            while (await reader.ReadAsync(ct))
+
+            {
+
+                var id = Convert.ToString(reader.GetValue(0),
+
+                    System.Globalization.CultureInfo.InvariantCulture);
+
+                if (id != null)
+
+                    result[id] = reader.IsDBNull(1) ? null : reader.GetString(1);
+
+            }
+
+        }
+
+        return result;
+
+    }
+
+
+
     // ============================================================
 
-    public async Task<List<OracleSupplierDto>>
-        SearchSuppliersAsync(
-            string? search,
-            CancellationToken ct)
+    // TEST CONNECTIVITY
+
+    // ============================================================
+
+
+
+    public async Task<bool> TestConnectivityAsync(
+
+        CancellationToken ct)
+
     {
-        if (
-            string.IsNullOrWhiteSpace(
-                search
-            )
-        )
-        {
-            return await GetSuppliersAsync(
-                ct
-            );
-        }
 
         await using var connection =
+
             await Open(ct);
 
+
+
         await using var command =
+
             connection.CreateCommand();
 
-        command.BindByName = true;
 
-        var searchText =
-            search
-                .Trim()
-                .ToUpperInvariant();
-
-        var pattern =
-            $"%{searchText}%";
 
         command.CommandText =
-            """
-            SELECT *
-            FROM APPS.PORTAL_SUPPLIERS_V
-            WHERE
-                UPPER(
-                    NVL(
-                        VENDOR_NAME,
-                        ''
-                    )
-                ) LIKE :pattern
 
-                OR UPPER(
-                    TRIM(
-                        CAST(
-                            VENDOR_ID AS VARCHAR2(100)
-                        )
-                    )
-                ) LIKE :pattern
+            "SELECT 1 FROM DUAL";
 
-                OR UPPER(
-                    TRIM(
-                        CAST(
-                            SUPPLIER_NUMBER AS VARCHAR2(100)
-                        )
-                    )
-                ) LIKE :pattern
 
-                OR UPPER(
-                    NVL(
-                        CONTACT_PERSON,
-                        ''
-                    )
-                ) LIKE :pattern
 
-                OR UPPER(
-                    NVL(
-                        CONTACT_EMAIL,
-                        ''
-                    )
-                ) LIKE :pattern
+        var result =
 
-                OR UPPER(
-                    NVL(
-                        CONTACT_PHONE,
-                        ''
-                    )
-                ) LIKE :pattern
+            await command.ExecuteScalarAsync(ct);
 
-            ORDER BY VENDOR_NAME
-            """;
 
-        command.Parameters.Add(
-            "pattern",
-            OracleDbType.Varchar2
-        ).Value =
-            pattern;
 
-        var rows =
-            await Read(
-                command,
-                ct
-            );
+        return Convert.ToInt32(result) == 1;
 
-        return rows
-            .Select(
-                MapSupplier
-            )
-            .ToList();
     }
 
-    // ============================================================
-    // GET PO / GRN DATA
+
+
     // ============================================================
 
-    public async Task<List<OraclePoGrnDto>>
-        GetPoGrnsAsync(
+    // GET SUPPLIER BY ORACLE VENDOR ID
+
+    // ============================================================
+
+
+
+    public async Task<OracleSupplierDto?>
+
+        GetSupplierByVendorIdAsync(
+
             decimal vendorId,
-            string? poNumber,
+
             CancellationToken ct)
+
     {
+
         await using var connection =
+
             await Open(ct);
 
+
+
         await using var command =
+
             connection.CreateCommand();
+
+
 
         command.BindByName = true;
 
+
+
         command.CommandText =
+
             """
+
             SELECT *
-            FROM APPS.PORTAL_PO_GRN_V
+
+            FROM APPS.PORTAL_SUPPLIERS_V
+
             WHERE VENDOR_ID = :vendorId
 
-              AND COALESCE(
-                    RECEIPT_DATE,
-                    PO_CREATION_DATE,
-                    PO_APPROVED_DATE
-                  ) >= :fiscalWindowStart
-            """
-            +
-            (
-                string.IsNullOrWhiteSpace(
-                    poNumber
-                )
-                    ? ""
-                    :
-                    """
-                     AND TRIM(
-                         CAST(
-                             PO_NUMBER AS VARCHAR2(100)
-                         )
-                     ) = :poNumber
-                    """
-            )
-            +
-            """
-             ORDER BY
-                 PO_NUMBER DESC,
-                 RECEIPT_DATE DESC NULLS LAST
+              AND ROWNUM = 1
+
             """;
 
+
+
         command.Parameters.Add(
+
             "vendorId",
+
             OracleDbType.Decimal
-        ).Value =
-            vendorId;
 
-        command.Parameters.Add(
-            "fiscalWindowStart",
-            OracleDbType.Date
-        ).Value =
-            PakistanFiscalWindow.Start();
+        ).Value = vendorId;
 
-        if (
-            !string.IsNullOrWhiteSpace(
-                poNumber
-            )
-        )
-        {
-            command.Parameters.Add(
-                "poNumber",
-                OracleDbType.Varchar2
-            ).Value =
-                poNumber.Trim();
-        }
+
 
         var rows =
+
             await Read(
+
                 command,
+
                 ct
+
             );
 
-        var mappedRows =
-            rows
-                .Select(
-                    MapPoGrn
-                )
-                .ToList();
 
-        /*
-         * IMPORTANT:
-         *
-         * Oracle view APPS.PORTAL_PO_GRN_V can return more than
-         * one transaction record for the same logical GRN line.
-         *
-         * Example:
-         *
-         * Same:
-         *   PO
-         *   GRN
-         *   PO Line
-         *   Shipment Line
-         *   Item
-         *   Qty
-         *   Unit Price
-         *
-         * But different RCV_TRANSACTION_ID.
-         *
-         * If we deduplicate only on RCV_TRANSACTION_ID, the same
-         * GRN line appears multiple times and:
-         *
-         *   Received Qty is duplicated
-         *   Available Qty is duplicated
-         *   GRN Amount is duplicated
-         *   Available To Invoice is duplicated
-         *
-         * For portal display/calculation the correct logical grain
-         * is primarily:
-         *
-         *   GRN_NUMBER + SHIPMENT_LINE_ID
-         *
-         * RCV_TRANSACTION_ID is still preserved in the selected
-         * DTO row for Oracle AP invoice integration.
-         */
-
-        return mappedRows
-            .GroupBy(
-                GetPoGrnBusinessLineKey,
-                StringComparer.OrdinalIgnoreCase
-            )
-            .Select(
-                group =>
-                    SelectBestPoGrnRow(
-                        group
-                    )
-            )
-            .OrderByDescending(
-                x =>
-                    x.PoNumber
-            )
-            .ThenByDescending(
-                x =>
-                    x.ReceiptDate
-            )
-            .ToList();
-    }
-
-    // ============================================================
-    // SELECT BEST ROW FROM DUPLICATE GRN RECORDS
-    // ============================================================
-
-    private static OraclePoGrnDto SelectBestPoGrnRow(
-        IEnumerable<OraclePoGrnDto> rows)
-    {
-        /*
-         * When the same logical GRN line is returned multiple
-         * times by Oracle, prefer the row carrying the greatest
-         * available quantity.
-         *
-         * If quantities are equal, prefer the latest receipt date.
-         *
-         * This keeps one canonical row for the portal.
-         */
-
-        return rows
-            .OrderByDescending(
-                x =>
-                    x.QuantityAvailableToInvoice
-                    ?? 0
-            )
-            .ThenByDescending(
-                x =>
-                    x.GrnReceivedQuantity
-                    ??
-                    x.ReceivedQuantity
-                    ??
-                    0
-            )
-            .ThenByDescending(
-                x =>
-                    x.ReceiptDate
-            )
-            .ThenByDescending(
-                x =>
-                    ParseNumericId(
-                        x.RcvTransactionId
-                    )
-            )
-            .First();
-    }
-
-    // ============================================================
-    // PO / GRN BUSINESS LINE KEY
-    // ============================================================
-
-    private static string GetPoGrnBusinessLineKey(
-        OraclePoGrnDto row)
-    {
-        var poNumber =
-            NormalizeKeyPart(
-                row.PoNumber
-            );
-
-        var grnNumber =
-            NormalizeKeyPart(
-                row.GrnNumber
-            );
-
-        var shipmentLineId =
-            NormalizeKeyPart(
-                row.ShipmentLineId
-            );
-
-        var poLineId =
-            NormalizeKeyPart(
-                row.PoLineId
-            );
-
-        var poLineNum =
-            NormalizeKeyPart(
-                row.PoLineNum
-            );
-
-        var itemId =
-            NormalizeKeyPart(
-                row.ItemId
-            );
-
-        var itemCode =
-            NormalizeKeyPart(
-                row.ItemCode
-            );
-
-        /*
-         * BEST CASE
-         *
-         * SHIPMENT_LINE_ID identifies the physical Oracle
-         * receiving shipment line.
-         *
-         * One GRN can legitimately have multiple lines, therefore
-         * GRN number alone must never be used for deduplication.
-         */
 
         if (
-            !string.IsNullOrWhiteSpace(
-                shipmentLineId
-            )
+
+            rows.Count == 0
+
         )
+
         {
-            return string.Join(
-                "|",
-                "PO",
-                poNumber,
-                "GRN",
-                grnNumber,
-                "SHIPMENT_LINE",
-                shipmentLineId
-            );
+
+            return null;
+
         }
 
-        /*
-         * SECOND FALLBACK
-         *
-         * If shipment line is unavailable, use GRN + PO line +
-         * item identity.
-         *
-         * This prevents identical Oracle transaction rows for the
-         * same business line from being counted multiple times.
-         */
 
-        if (
-            !string.IsNullOrWhiteSpace(
-                poLineId
-            )
-        )
-        {
-            return string.Join(
-                "|",
-                "PO",
-                poNumber,
-                "GRN",
-                grnNumber,
-                "PO_LINE_ID",
-                poLineId,
-                "ITEM",
-                !string.IsNullOrWhiteSpace(
-                    itemId
-                )
-                    ? itemId
-                    : itemCode
-            );
-        }
 
-        /*
-         * THIRD FALLBACK
-         *
-         * Some Oracle views may not expose PO_LINE_ID but may expose
-         * the human-readable PO line number.
-         */
+        return MapSupplier(
 
-        if (
-            !string.IsNullOrWhiteSpace(
-                poLineNum
-            )
-        )
-        {
-            return string.Join(
-                "|",
-                "PO",
-                poNumber,
-                "GRN",
-                grnNumber,
-                "PO_LINE_NUM",
-                poLineNum,
-                "ITEM",
-                !string.IsNullOrWhiteSpace(
-                    itemId
-                )
-                    ? itemId
-                    : itemCode
-            );
-        }
+            rows[0]
 
-        /*
-         * FINAL FALLBACK
-         *
-         * Only used when Oracle does not provide shipment-line or
-         * PO-line identifiers.
-         *
-         * Keep quantity, price and date in the key to avoid merging
-         * genuinely different GRN receipt lines.
-         */
-
-        return string.Join(
-            "|",
-            "PO",
-            poNumber,
-            "GRN",
-            grnNumber,
-            "ITEM",
-            !string.IsNullOrWhiteSpace(
-                itemId
-            )
-                ? itemId
-                : itemCode,
-            "QTY",
-            DecimalKey(
-                row.GrnReceivedQuantity
-                ??
-                row.ReceivedQuantity
-            ),
-            "PRICE",
-            DecimalKey(
-                row.UnitPrice
-            ),
-            "DATE",
-            DateKey(
-                row.ReceiptDate
-            )
         );
+
     }
 
-    // ============================================================
-    // NORMALIZE BUSINESS KEY STRING
-    // ============================================================
 
-    private static string NormalizeKeyPart(
-        string? value)
-    {
-        return string.IsNullOrWhiteSpace(
-            value
-        )
-            ? ""
-            : value
-                .Trim()
-                .ToUpperInvariant();
-    }
 
     // ============================================================
-    // DECIMAL KEY
-    // ============================================================
 
-    private static string DecimalKey(
-        decimal? value)
-    {
-        return (
-            value
-            ?? 0
-        ).ToString(
-            System.Globalization
-                .CultureInfo
-                .InvariantCulture
-        );
-    }
+    // GET SUPPLIER BY SUPPLIER NUMBER
 
     // ============================================================
-    // DATE KEY
-    // ============================================================
 
-    private static string DateKey(
-        DateTime? value)
-    {
-        return value.HasValue
-            ? value.Value.ToString(
-                "yyyyMMddHHmmss",
-                System.Globalization
-                    .CultureInfo
-                    .InvariantCulture
-            )
-            : "";
-    }
 
-    // ============================================================
-    // SAFE NUMERIC ID FOR SORTING
-    // ============================================================
 
-    private static decimal ParseNumericId(
-        string? value)
-    {
-        if (
-            decimal.TryParse(
-                value,
-                System.Globalization
-                    .NumberStyles
-                    .Any,
-                System.Globalization
-                    .CultureInfo
-                    .InvariantCulture,
-                out var parsed
-            )
-        )
-        {
-            return parsed;
-        }
+    public async Task<OracleSupplierDto?>
 
-        return 0;
-    }
+        GetSupplierByNumberAsync(
 
-    // ============================================================
-    // GET ORACLE INVOICES
-    // ============================================================
+            string supplierNumber,
 
-    public async Task<List<OracleInvoiceDto>>
-        GetInvoicesAsync(
-            decimal vendorId,
             CancellationToken ct)
+
     {
+
         await using var connection =
+
             await Open(ct);
 
+
+
         await using var command =
+
             connection.CreateCommand();
+
+
 
         command.BindByName = true;
 
+
+
         command.CommandText =
+
             """
+
+            SELECT *
+
+            FROM APPS.PORTAL_SUPPLIERS_V
+
+            WHERE TRIM(
+
+                CAST(
+
+                    SUPPLIER_NUMBER AS VARCHAR2(100)
+
+                )
+
+            ) = :supplierNumber
+
+              AND ROWNUM = 1
+
+            """;
+
+
+
+        command.Parameters.Add(
+
+            "supplierNumber",
+
+            OracleDbType.Varchar2
+
+        ).Value =
+
+            supplierNumber.Trim();
+
+
+
+        var rows =
+
+            await Read(
+
+                command,
+
+                ct
+
+            );
+
+
+
+        if (
+
+            rows.Count == 0
+
+        )
+
+        {
+
+            return null;
+
+        }
+
+
+
+        return MapSupplier(
+
+            rows[0]
+
+        );
+
+    }
+
+
+
+    // ============================================================
+
+    // GET ALL SUPPLIERS
+
+    // ============================================================
+
+
+
+    public async Task<List<OracleSupplierDto>>
+
+        GetSuppliersAsync(
+
+            CancellationToken ct)
+
+    {
+
+        await using var connection =
+
+            await Open(ct);
+
+
+
+        await using var command =
+
+            connection.CreateCommand();
+
+
+
+        command.CommandText =
+
+            """
+
+            SELECT *
+
+            FROM APPS.PORTAL_SUPPLIERS_V
+
+            ORDER BY VENDOR_NAME
+
+            """;
+
+
+
+        var rows =
+
+            await Read(
+
+                command,
+
+                ct
+
+            );
+
+
+
+        return rows
+
+            .Select(
+
+                MapSupplier
+
+            )
+
+            .GroupBy(
+
+                supplier => supplier.VendorId,
+
+                StringComparer.OrdinalIgnoreCase
+
+            )
+
+            .Select(group => group.First())
+
+            .ToList();
+
+    }
+
+
+
+    // ============================================================
+
+    // GET TOTAL ORACLE VENDOR COUNT
+
+    // ============================================================
+
+
+
+    public async Task<int> GetOracleVendorCountAsync(
+
+        CancellationToken ct)
+
+    {
+
+        await using var connection =
+
+            await Open(ct);
+
+
+
+        await using var command =
+
+            connection.CreateCommand();
+
+
+
+        command.CommandText =
+
+            """
+
+            SELECT COUNT(DISTINCT VENDOR_ID)
+
+            FROM APPS.PORTAL_SUPPLIERS_V
+
+            WHERE VENDOR_ID IS NOT NULL
+
+            """;
+
+
+
+        try
+
+        {
+
+            var result =
+
+                await command.ExecuteScalarAsync(
+
+                    ct
+
+                );
+
+
+
+            if (
+
+                result is null ||
+
+                result == DBNull.Value
+
+            )
+
+            {
+
+                return 0;
+
+            }
+
+
+
+            return Convert.ToInt32(
+
+                result
+
+            );
+
+        }
+
+        catch (
+
+            OracleException ex
+
+        )
+
+        {
+
+            logger.LogError(
+
+                ex,
+
+                "Failed to get total Oracle vendor count. OracleError={OracleErrorNumber}",
+
+                ex.Number
+
+            );
+
+
+
+            throw;
+
+        }
+
+    }
+
+
+
+    // ============================================================
+
+    // SEARCH SUPPLIERS
+
+    // ============================================================
+
+
+
+    public async Task<List<OracleSupplierDto>>
+
+        SearchSuppliersAsync(
+
+            string? search,
+
+            CancellationToken ct)
+
+    {
+
+        if (
+
+            string.IsNullOrWhiteSpace(
+
+                search
+
+            )
+
+        )
+
+        {
+
+            return await GetSuppliersAsync(
+
+                ct
+
+            );
+
+        }
+
+
+
+        await using var connection =
+
+            await Open(ct);
+
+
+
+        await using var command =
+
+            connection.CreateCommand();
+
+
+
+        command.BindByName = true;
+
+
+
+        var searchText =
+
+            search
+
+                .Trim()
+
+                .ToUpperInvariant();
+
+
+
+        var pattern =
+
+            $"%{searchText}%";
+
+
+
+        command.CommandText =
+
+            """
+
+            SELECT *
+
+            FROM APPS.PORTAL_SUPPLIERS_V
+
+            WHERE
+
+                UPPER(
+
+                    NVL(
+
+                        VENDOR_NAME,
+
+                        ''
+
+                    )
+
+                ) LIKE :pattern
+
+
+
+                OR UPPER(
+
+                    TRIM(
+
+                        CAST(
+
+                            VENDOR_ID AS VARCHAR2(100)
+
+                        )
+
+                    )
+
+                ) LIKE :pattern
+
+
+
+                OR UPPER(
+
+                    TRIM(
+
+                        CAST(
+
+                            SUPPLIER_NUMBER AS VARCHAR2(100)
+
+                        )
+
+                    )
+
+                ) LIKE :pattern
+
+
+
+                OR UPPER(
+
+                    NVL(
+
+                        CONTACT_PERSON,
+
+                        ''
+
+                    )
+
+                ) LIKE :pattern
+
+
+
+                OR UPPER(
+
+                    NVL(
+
+                        CONTACT_EMAIL,
+
+                        ''
+
+                    )
+
+                ) LIKE :pattern
+
+
+
+                OR UPPER(
+
+                    NVL(
+
+                        CONTACT_PHONE,
+
+                        ''
+
+                    )
+
+                ) LIKE :pattern
+
+
+
+            ORDER BY VENDOR_NAME
+
+            """;
+
+
+
+        command.Parameters.Add(
+
+            "pattern",
+
+            OracleDbType.Varchar2
+
+        ).Value =
+
+            pattern;
+
+
+
+        var rows =
+
+            await Read(
+
+                command,
+
+                ct
+
+            );
+
+
+
+        return rows
+
+            .Select(
+
+                MapSupplier
+
+            )
+
+            .GroupBy(
+
+                supplier => supplier.VendorId,
+
+                StringComparer.OrdinalIgnoreCase
+
+            )
+
+            .Select(group => group.First())
+
+            .ToList();
+
+    }
+
+
+
+    // ============================================================
+
+    // GET PO / GRN DATA
+
+    // ============================================================
+
+
+
+    public async Task<List<OraclePoGrnDto>>
+
+        GetPoGrnsAsync(
+
+            decimal vendorId,
+
+            string? poNumber,
+
+            CancellationToken ct)
+
+    {
+
+        await using var connection =
+
+            await Open(ct);
+
+
+
+        await using var command =
+
+            connection.CreateCommand();
+
+
+
+        command.BindByName = true;
+
+
+
+        command.CommandText =
+
+            """
+
+            SELECT *
+
+            FROM APPS.PORTAL_PO_GRN_V
+
+            WHERE VENDOR_ID = :vendorId
+
+
+
+              AND COALESCE(
+
+                    RECEIPT_DATE,
+
+                    PO_CREATION_DATE,
+
+                    PO_APPROVED_DATE
+
+                  ) >= :fiscalWindowStart
+
+            """
+
+            +
+
+            (
+
+                string.IsNullOrWhiteSpace(
+
+                    poNumber
+
+                )
+
+                    ? ""
+
+                    :
+
+                    """
+
+                     AND TRIM(
+
+                         CAST(
+
+                             PO_NUMBER AS VARCHAR2(100)
+
+                         )
+
+                     ) = :poNumber
+
+                    """
+
+            )
+
+            +
+
+            """
+
+             ORDER BY
+
+                 PO_NUMBER DESC,
+
+                 RECEIPT_DATE DESC NULLS LAST
+
+            """;
+
+
+
+        command.Parameters.Add(
+
+            "vendorId",
+
+            OracleDbType.Decimal
+
+        ).Value =
+
+            vendorId;
+
+
+
+        command.Parameters.Add(
+
+            "fiscalWindowStart",
+
+            OracleDbType.Date
+
+        ).Value =
+
+            PakistanFiscalWindow.Start();
+
+
+
+        if (
+
+            !string.IsNullOrWhiteSpace(
+
+                poNumber
+
+            )
+
+        )
+
+        {
+
+            command.Parameters.Add(
+
+                "poNumber",
+
+                OracleDbType.Varchar2
+
+            ).Value =
+
+                poNumber.Trim();
+
+        }
+
+
+
+        var rows =
+
+            await Read(
+
+                command,
+
+                ct
+
+            );
+
+
+
+        var mappedRows =
+
+            rows
+
+                .Select(
+
+                    MapPoGrn
+
+                )
+
+                .ToList();
+
+
+
+        /*
+
+         * IMPORTANT:
+
+         *
+
+         * Oracle view APPS.PORTAL_PO_GRN_V can return more than
+
+         * one transaction record for the same logical GRN line.
+
+         *
+
+         * Example:
+
+         *
+
+         * Same:
+
+         *   PO
+
+         *   GRN
+
+         *   PO Line
+
+         *   Shipment Line
+
+         *   Item
+
+         *   Qty
+
+         *   Unit Price
+
+         *
+
+         * But different RCV_TRANSACTION_ID.
+
+         *
+
+         * If we deduplicate only on RCV_TRANSACTION_ID, the same
+
+         * GRN line appears multiple times and:
+
+         *
+
+         *   Received Qty is duplicated
+
+         *   Available Qty is duplicated
+
+         *   GRN Amount is duplicated
+
+         *   Available To Invoice is duplicated
+
+         *
+
+         * For portal display/calculation the correct logical grain
+
+         * is primarily:
+
+         *
+
+         *   GRN_NUMBER + SHIPMENT_LINE_ID
+
+         *
+
+         * RCV_TRANSACTION_ID is still preserved in the selected
+
+         * DTO row for Oracle AP invoice integration.
+
+         */
+
+
+
+        return mappedRows
+
+            .GroupBy(
+
+                GetPoGrnBusinessLineKey,
+
+                StringComparer.OrdinalIgnoreCase
+
+            )
+
+            .Select(
+
+                group =>
+
+                    SelectBestPoGrnRow(
+
+                        group
+
+                    )
+
+            )
+
+            .OrderByDescending(
+
+                x =>
+
+                    x.PoNumber
+
+            )
+
+            .ThenByDescending(
+
+                x =>
+
+                    x.ReceiptDate
+
+            )
+
+            .ToList();
+
+    }
+
+
+
+    // ============================================================
+
+    // SELECT BEST ROW FROM DUPLICATE GRN RECORDS
+
+    // ============================================================
+
+
+
+    private static OraclePoGrnDto SelectBestPoGrnRow(
+
+        IEnumerable<OraclePoGrnDto> rows)
+
+    {
+
+        /*
+
+         * When the same logical GRN line is returned multiple
+
+         * times by Oracle, prefer the row carrying the greatest
+
+         * available quantity.
+
+         *
+
+         * If quantities are equal, prefer the latest receipt date.
+
+         *
+
+         * This keeps one canonical row for the portal.
+
+         */
+
+
+
+        return rows
+
+            .OrderByDescending(
+
+                x =>
+
+                    x.QuantityAvailableToInvoice
+
+                    ?? 0
+
+            )
+
+            .ThenByDescending(
+
+                x =>
+
+                    x.GrnReceivedQuantity
+
+                    ??
+
+                    x.ReceivedQuantity
+
+                    ??
+
+                    0
+
+            )
+
+            .ThenByDescending(
+
+                x =>
+
+                    x.ReceiptDate
+
+            )
+
+            .ThenByDescending(
+
+                x =>
+
+                    ParseNumericId(
+
+                        x.RcvTransactionId
+
+                    )
+
+            )
+
+            .First();
+
+    }
+
+
+
+    // ============================================================
+
+    // PO / GRN BUSINESS LINE KEY
+
+    // ============================================================
+
+
+
+    private static string GetPoGrnBusinessLineKey(
+
+        OraclePoGrnDto row)
+
+    {
+
+        var poNumber =
+
+            NormalizeKeyPart(
+
+                row.PoNumber
+
+            );
+
+
+
+        var grnNumber =
+
+            NormalizeKeyPart(
+
+                row.GrnNumber
+
+            );
+
+
+
+        var shipmentLineId =
+
+            NormalizeKeyPart(
+
+                row.ShipmentLineId
+
+            );
+
+
+
+        var poLineId =
+
+            NormalizeKeyPart(
+
+                row.PoLineId
+
+            );
+
+
+
+        var poLineNum =
+
+            NormalizeKeyPart(
+
+                row.PoLineNum
+
+            );
+
+
+
+        var itemId =
+
+            NormalizeKeyPart(
+
+                row.ItemId
+
+            );
+
+
+
+        var itemCode =
+
+            NormalizeKeyPart(
+
+                row.ItemCode
+
+            );
+
+
+
+        /*
+
+         * BEST CASE
+
+         *
+
+         * SHIPMENT_LINE_ID identifies the physical Oracle
+
+         * receiving shipment line.
+
+         *
+
+         * One GRN can legitimately have multiple lines, therefore
+
+         * GRN number alone must never be used for deduplication.
+
+         */
+
+
+
+        if (
+
+            !string.IsNullOrWhiteSpace(
+
+                shipmentLineId
+
+            )
+
+        )
+
+        {
+
+            return string.Join(
+
+                "|",
+
+                "PO",
+
+                poNumber,
+
+                "GRN",
+
+                grnNumber,
+
+                "SHIPMENT_LINE",
+
+                shipmentLineId
+
+            );
+
+        }
+
+
+
+        /*
+
+         * SECOND FALLBACK
+
+         *
+
+         * If shipment line is unavailable, use GRN + PO line +
+
+         * item identity.
+
+         *
+
+         * This prevents identical Oracle transaction rows for the
+
+         * same business line from being counted multiple times.
+
+         */
+
+
+
+        if (
+
+            !string.IsNullOrWhiteSpace(
+
+                poLineId
+
+            )
+
+        )
+
+        {
+
+            return string.Join(
+
+                "|",
+
+                "PO",
+
+                poNumber,
+
+                "GRN",
+
+                grnNumber,
+
+                "PO_LINE_ID",
+
+                poLineId,
+
+                "ITEM",
+
+                !string.IsNullOrWhiteSpace(
+
+                    itemId
+
+                )
+
+                    ? itemId
+
+                    : itemCode
+
+            );
+
+        }
+
+
+
+        /*
+
+         * THIRD FALLBACK
+
+         *
+
+         * Some Oracle views may not expose PO_LINE_ID but may expose
+
+         * the human-readable PO line number.
+
+         */
+
+
+
+        if (
+
+            !string.IsNullOrWhiteSpace(
+
+                poLineNum
+
+            )
+
+        )
+
+        {
+
+            return string.Join(
+
+                "|",
+
+                "PO",
+
+                poNumber,
+
+                "GRN",
+
+                grnNumber,
+
+                "PO_LINE_NUM",
+
+                poLineNum,
+
+                "ITEM",
+
+                !string.IsNullOrWhiteSpace(
+
+                    itemId
+
+                )
+
+                    ? itemId
+
+                    : itemCode
+
+            );
+
+        }
+
+
+
+        /*
+
+         * FINAL FALLBACK
+
+         *
+
+         * Only used when Oracle does not provide shipment-line or
+
+         * PO-line identifiers.
+
+         *
+
+         * Keep quantity, price and date in the key to avoid merging
+
+         * genuinely different GRN receipt lines.
+
+         */
+
+
+
+        return string.Join(
+
+            "|",
+
+            "PO",
+
+            poNumber,
+
+            "GRN",
+
+            grnNumber,
+
+            "ITEM",
+
+            !string.IsNullOrWhiteSpace(
+
+                itemId
+
+            )
+
+                ? itemId
+
+                : itemCode,
+
+            "QTY",
+
+            DecimalKey(
+
+                row.GrnReceivedQuantity
+
+                ??
+
+                row.ReceivedQuantity
+
+            ),
+
+            "PRICE",
+
+            DecimalKey(
+
+                row.UnitPrice
+
+            ),
+
+            "DATE",
+
+            DateKey(
+
+                row.ReceiptDate
+
+            )
+
+        );
+
+    }
+
+
+
+    // ============================================================
+
+    // NORMALIZE BUSINESS KEY STRING
+
+    // ============================================================
+
+
+
+    private static string NormalizeKeyPart(
+
+        string? value)
+
+    {
+
+        return string.IsNullOrWhiteSpace(
+
+            value
+
+        )
+
+            ? ""
+
+            : value
+
+                .Trim()
+
+                .ToUpperInvariant();
+
+    }
+
+
+
+    // ============================================================
+
+    // DECIMAL KEY
+
+    // ============================================================
+
+
+
+    private static string DecimalKey(
+
+        decimal? value)
+
+    {
+
+        return (
+
+            value
+
+            ?? 0
+
+        ).ToString(
+
+            System.Globalization
+
+                .CultureInfo
+
+                .InvariantCulture
+
+        );
+
+    }
+
+
+
+    // ============================================================
+
+    // DATE KEY
+
+    // ============================================================
+
+
+
+    private static string DateKey(
+
+        DateTime? value)
+
+    {
+
+        return value.HasValue
+
+            ? value.Value.ToString(
+
+                "yyyyMMddHHmmss",
+
+                System.Globalization
+
+                    .CultureInfo
+
+                    .InvariantCulture
+
+            )
+
+            : "";
+
+    }
+
+
+
+    // ============================================================
+
+    // SAFE NUMERIC ID FOR SORTING
+
+    // ============================================================
+
+
+
+    private static decimal ParseNumericId(
+
+        string? value)
+
+    {
+
+        if (
+
+            decimal.TryParse(
+
+                value,
+
+                System.Globalization
+
+                    .NumberStyles
+
+                    .Any,
+
+                System.Globalization
+
+                    .CultureInfo
+
+                    .InvariantCulture,
+
+                out var parsed
+
+            )
+
+        )
+
+        {
+
+            return parsed;
+
+        }
+
+
+
+        return 0;
+
+    }
+
+
+
+    // ============================================================
+
+    // GET ORACLE INVOICES
+
+    // ============================================================
+
+
+
+    public async Task<List<OracleInvoiceDto>>
+
+        GetInvoicesAsync(
+
+            decimal vendorId,
+
+            CancellationToken ct)
+
+    {
+
+        await using var connection =
+
+            await Open(ct);
+
+
+
+        await using var command =
+
+            connection.CreateCommand();
+
+
+
+        command.BindByName = true;
+
+
+
+        command.CommandText =
+
+            """
+
             SELECT
+
                 TO_CHAR(v.VENDOR_ID) AS VENDOR_ID,
+
                 TO_CHAR(v.SUPPLIER_NUMBER) AS SUPPLIER_NUMBER,
+
                 v.VENDOR_NAME,
+
                 TO_CHAR(v.INVOICE_ID) AS INVOICE_ID,
+
                 v.INVOICE_NUM,
+
                 v.INVOICE_DATE,
 
+
+
                 TO_CHAR(
+
                     v.INVOICE_AMOUNT,
+
                     'TM9',
+
                     'NLS_NUMERIC_CHARACTERS=''.,'''
+
                 ) AS INVOICE_AMOUNT,
 
+
+
                 TO_CHAR(
+
                     v.AMOUNT_PAID,
+
                     'TM9',
+
                     'NLS_NUMERIC_CHARACTERS=''.,'''
+
                 ) AS AMOUNT_PAID,
 
+
+
                 TO_CHAR(
+
                     v.OUTSTANDING_AMOUNT,
+
                     'TM9',
+
                     'NLS_NUMERIC_CHARACTERS=''.,'''
+
                 ) AS OUTSTANDING_AMOUNT,
 
+
+
                 v.PAYMENT_STATUS_FLAG,
+
                 v.PAYMENT_STATUS,
 
+
+
                 CASE
+
                     WHEN UPPER(
+
                         TRIM(
+
                             aia.ATTRIBUTE_CATEGORY
+
                         )
+
                     ) = 'BUSINESS PARTNER PORTAL'
+
                     THEN TRIM(
+
                         aia.ATTRIBUTE11
+
                     )
+
                     ELSE NULL
+
                 END AS APPROVAL_STATUS,
 
+
+
                 CASE
+
                     WHEN UPPER(
+
                         TRIM(
+
                             aia.ATTRIBUTE_CATEGORY
+
                         )
+
                     ) = 'BUSINESS PARTNER PORTAL'
+
                     THEN TRIM(
+
                         aia.ATTRIBUTE13
+
                     )
+
                     ELSE NULL
+
                 END AS REMARKS,
 
-                TO_CHAR(
-                    v.PO_NUMBER
-                ) AS PO_NUMBER,
+
 
                 TO_CHAR(
+
+                    v.PO_NUMBER
+
+                ) AS PO_NUMBER,
+
+
+
+                TO_CHAR(
+
                     v.GRN_NUMBER
+
                 ) AS GRN_NUMBER,
+
+
 
                 v.RECEIPT_DATE
 
+
+
             FROM APPS.PORTAL_INVOICES_V v
 
+
+
             LEFT JOIN AP_INVOICES_ALL aia
+
                 ON aia.INVOICE_ID =
+
                    v.INVOICE_ID
 
+
+
             WHERE v.VENDOR_ID =
+
                   :vendorId
 
+
+
             ORDER BY
+
                 v.INVOICE_DATE DESC NULLS LAST
+
             """;
 
+
+
         command.Parameters.Add(
+
             "vendorId",
+
             OracleDbType.Decimal
+
         ).Value =
+
             vendorId;
 
+
+
         var rows =
+
             await Read(
+
                 command,
+
                 ct
+
             );
+
+
 
         var mappedInvoices =
+
             rows
+
                 .Select(
+
                     MapInvoice
+
                 )
+
                 .ToList();
 
+
+
         /*
+
          * APPS.PORTAL_INVOICES_V can return the same AP invoice more
+
          * than once when the view joins the invoice header to one-to-many
+
          * PO / receipt / GRN detail rows.
+
          *
+
          * The Payments screen is an invoice-header view, so its grain must
+
          * be one row per Oracle AP INVOICE_ID.
+
          *
+
          * OracleInvoiceId is therefore the primary deduplication key.
+
          * A conservative fallback is retained for any legacy/custom view
+
          * row where INVOICE_ID is unexpectedly unavailable.
+
          */
+
+
 
         return mappedInvoices
+
             .GroupBy(
+
                 GetOracleInvoiceBusinessKey,
+
                 StringComparer.OrdinalIgnoreCase
+
             )
+
             .Select(
+
                 SelectBestOracleInvoiceRow
+
             )
+
             .OrderByDescending(
+
                 x =>
+
                     x.InvoiceDate
+
             )
+
             .ThenByDescending(
+
                 x =>
+
                     x.OracleInvoiceId
+
             )
+
             .ToList();
+
     }
 
+
+
     // ============================================================
+
     // ORACLE INVOICE BUSINESS KEY
+
     // ============================================================
+
+
 
     private static string GetOracleInvoiceBusinessKey(
+
         OracleInvoiceDto invoice)
+
     {
+
         if (
+
             !string.IsNullOrWhiteSpace(
+
                 invoice.OracleInvoiceId
+
             )
+
         )
+
         {
+
             return
+
                 $"INVOICE_ID|{invoice.OracleInvoiceId.Trim()}";
+
         }
+
+
 
         return string.Join(
+
             "|",
+
             "FALLBACK",
+
             invoice.VendorId?.Trim()
+
                 ?? string.Empty,
+
             invoice.InvoiceNumber?.Trim()
+
                 ?? string.Empty,
+
             invoice.InvoiceDate?.ToString(
+
                 "yyyyMMdd",
+
                 CultureInfo.InvariantCulture
+
             )
+
                 ?? string.Empty,
+
             invoice.InvoiceAmount.ToString(
+
                 CultureInfo.InvariantCulture
+
             )
+
         );
+
     }
 
+
+
     // ============================================================
+
     // SELECT CANONICAL ORACLE INVOICE ROW
+
     // ============================================================
+
+
 
     private static OracleInvoiceDto SelectBestOracleInvoiceRow(
+
         IEnumerable<OracleInvoiceDto> invoices)
+
     {
+
         /*
+
          * APPS.PORTAL_INVOICES_V may return multiple rows for the same
+
          * Oracle invoice because of PO / GRN / receipt joins.
+
          *
+
          * For portal reconciliation the Oracle DFF Approval Status is
+
          * authoritative.
+
          *
+
          * Priority:
+
          * 1. Row containing APPROVAL_STATUS
+
          * 2. Row containing REMARKS
+
          * 3. Row containing PAYMENT_STATUS
+
          * 4. Row containing AMOUNT_PAID
+
          * 5. Latest receipt row
+
          *
+
          * This prevents PAYMENT_STATUS = PAID from incorrectly overriding
+
          * APPROVAL_STATUS = Pending / Approved / Rejected / Cancelled.
+
          */
 
+
+
         return invoices
+
             .OrderByDescending(
+
                 x =>
+
                     !string.IsNullOrWhiteSpace(
+
                         x.ApprovalStatus
+
                     )
+
             )
+
             .ThenByDescending(
+
                 x =>
+
                     !string.IsNullOrWhiteSpace(
+
                         x.Remarks
+
                     )
+
             )
+
             .ThenByDescending(
+
                 x =>
+
                     !string.IsNullOrWhiteSpace(
+
                         x.PaymentStatus
+
                     )
+
             )
+
             .ThenByDescending(
+
                 x =>
+
                     x.AmountPaid.HasValue
+
             )
+
             .ThenByDescending(
+
                 x =>
+
                     x.ReceiptDate
+
             )
+
             .First();
+
     }
 
+
+
     // ============================================================
+
     // GENERIC ORACLE READER
+
     // ============================================================
+
+
 
     private async Task<
+
         List<
+
             Dictionary<
+
                 string,
+
                 object?
+
             >
+
         >
+
     >
+
         Read(
+
             OracleCommand command,
+
             CancellationToken ct)
+
     {
+
         try
+
         {
+
             var result =
+
                 new List<
+
                     Dictionary<
+
                         string,
+
                         object?
+
                     >
+
                 >();
 
+
+
             await using var reader =
+
                 await command.ExecuteReaderAsync(
+
                     ct
+
                 );
+
+
 
             while (
+
                 await reader.ReadAsync(
+
                     ct
+
                 )
+
             )
+
             {
+
                 var row =
+
                     new Dictionary<
+
                         string,
+
                         object?
+
                     >(
+
                         StringComparer
+
                             .OrdinalIgnoreCase
+
                     );
+
+
 
                 for (
+
                     var i = 0;
+
                     i <
+
                     reader.FieldCount;
+
                     i++
+
                 )
+
                 {
+
                     var columnName =
+
                         reader.GetName(
+
                             i
+
                         );
 
+
+
                     if (
+
                         reader.IsDBNull(
+
                             i
+
                         )
+
                     )
+
                     {
+
                         row[
+
                             columnName
+
                         ] =
+
                             null;
 
+
+
                         continue;
+
                     }
+
+
 
                     try
+
                     {
+
                         /*
+
                          * Oracle NUMBER supports a wider precision/range than
+
                          * System.Decimal. OracleDataReader.GetValue() may therefore
+
                          * throw InvalidCastException/OverflowException for a NUMBER
+
                          * that cannot be represented as a .NET decimal.
+
                          *
+
                          * Normal values continue through GetValue(). For an
+
                          * out-of-range Oracle numeric value, fall back to the
+
                          * Oracle-native value and keep its text representation.
+
                          * The S()/N() helpers below can safely consume that text.
+
                          */
 
+
+
                         row[
+
                             columnName
+
                         ] =
+
                             reader.GetValue(
+
                                 i
+
                             );
+
                     }
+
                     catch (
+
                         InvalidCastException
+
                     )
+
                     {
+
                         row[
+
                             columnName
+
                         ] =
+
                             Convert.ToString(
+
                                 reader.GetOracleValue(
+
                                     i
+
                                 ),
+
                                 CultureInfo.InvariantCulture
+
                             );
+
                     }
+
                     catch (
+
                         OverflowException
+
                     )
+
                     {
+
                         row[
+
                             columnName
+
                         ] =
+
                             Convert.ToString(
+
                                 reader.GetOracleValue(
+
                                     i
+
                                 ),
+
                                 CultureInfo.InvariantCulture
+
                             );
+
                     }
+
                 }
+
+
 
                 result.Add(
+
                     row
+
                 );
+
             }
+
+
 
             return result;
+
         }
+
         catch (
+
             OracleException ex
+
         )
+
         {
+
             logger.LogError(
+
                 ex,
+
                 "Oracle query failed. OracleError={OracleErrorNumber}",
+
                 ex.Number
+
             );
 
+
+
             throw;
+
         }
+
     }
 
+
+
     // ============================================================
+
     // SAFE STRING READER
+
     // ============================================================
+
+
 
     private static string S(
+
         Dictionary<string, object?> row,
+
         params string[] names)
+
     {
+
         foreach (
+
             var name
+
             in names
+
         )
+
         {
+
             if (
+
                 row.TryGetValue(
+
                     name,
+
                     out var value
+
                 )
+
                 &&
+
                 value is not null
+
             )
+
             {
+
                 var result =
+
                     Convert.ToString(
+
                         value
+
                     );
 
+
+
                 if (
+
                     !string.IsNullOrWhiteSpace(
+
                         result
+
                     )
+
                 )
+
                 {
+
                     return result.Trim();
+
                 }
+
             }
+
         }
+
+
 
         return "";
+
     }
 
+
+
     // ============================================================
+
     // SAFE NUMBER READER
+
     // ============================================================
+
+
 
     private static decimal? N(
+
         Dictionary<string, object?> row,
+
         params string[] names)
+
     {
+
         foreach (
+
             var name
+
             in names
+
         )
+
         {
+
             if (
+
                 !row.TryGetValue(
+
                     name,
+
                     out var value
+
                 )
+
                 ||
+
                 value is null
+
             )
+
             {
+
                 continue;
+
             }
+
+
 
             try
+
             {
+
                 return Convert.ToDecimal(
+
                     value
+
                 );
+
             }
+
             catch
+
             {
+
                 var text =
+
                     Convert.ToString(
+
                         value
+
                     );
 
+
+
                 if (
+
                     decimal.TryParse(
+
                         text,
+
                         out var parsed
+
                     )
+
                 )
+
                 {
+
                     return parsed;
+
                 }
+
             }
+
         }
 
+
+
         return null;
+
     }
 
+
+
     // ============================================================
+
     // SAFE DATE READER
+
     // ============================================================
+
+
 
     private static DateTime? D(
+
         Dictionary<string, object?> row,
+
         params string[] names)
+
     {
+
         foreach (
+
             var name
+
             in names
+
         )
+
         {
+
             if (
+
                 !row.TryGetValue(
+
                     name,
+
                     out var value
+
                 )
+
                 ||
+
                 value is null
+
             )
+
             {
+
                 continue;
+
             }
 
+
+
             if (
+
                 value
+
                 is DateTime date
+
             )
+
             {
+
                 return date;
+
             }
 
+
+
             if (
+
                 DateTime.TryParse(
+
                     Convert.ToString(
+
                         value
+
                     ),
+
                     out var parsed
+
                 )
+
             )
+
             {
+
                 return parsed;
+
             }
+
         }
 
+
+
         return null;
+
     }
 
+
+
     // ============================================================
+
     // SUPPLIER MAPPER
+
     // ============================================================
+
+
 
     private static OracleSupplierDto MapSupplier(
+
         Dictionary<string, object?> row)
+
     {
+
         return new OracleSupplierDto(
+
             VendorId:
+
                 S(
+
                     row,
+
                     "VENDOR_ID"
+
                 ),
+
+
 
             SupplierNumber:
+
                 S(
+
                     row,
+
                     "SUPPLIER_NUMBER",
+
                     "SEGMENT1"
+
                 ),
 
+
+
             VendorName:
+
                 S(
+
                     row,
+
                     "VENDOR_NAME"
+
                 ),
+
+
 
             VendorSiteId:
+
                 S(
+
                     row,
+
                     "VENDOR_SITE_ID"
+
                 ),
 
+
+
             VendorSiteCode:
+
                 S(
+
                     row,
+
                     "VENDOR_SITE_CODE"
+
                 ),
+
+
 
             OrgId:
+
                 S(
+
                     row,
+
                     "ORG_ID"
+
                 ),
+
+
 
             OperatingUnit:
+
                 S(
+
                     row,
+
                     "OPERATING_UNIT"
+
                 ),
+
+
 
             ContactPerson:
+
                 S(
+
                     row,
+
                     "CONTACT_PERSON",
+
                     "CONTACT_NAME"
+
                 ),
+
+
 
             Email:
+
                 S(
+
                     row,
+
                     "CONTACT_EMAIL",
+
                     "EMAIL_ADDRESS",
+
                     "EMAIL",
+
                     "VENDOR_EMAIL"
+
                 ),
+
+
 
             Phone:
+
                 S(
+
                     row,
+
                     "CONTACT_PHONE",
+
                     "PHONE",
+
                     "PHONE_NUMBER"
+
                 ),
+
+
 
             TaxNumber:
+
                 S(
+
                     row,
+
                     "TAX_REGISTRATION_NO",
+
                     "TAX_REGISTRATION_NUMBER",
+
                     "NTN",
+
                     "TAX_NUMBER"
+
                 ),
+
+
 
             VendorType:
+
                 S(
+
                     row,
+
                     "VENDOR_TYPE",
+
                     "VENDOR_TYPE_LOOKUP_CODE",
+
                     "SUPPLIER_TYPE"
+
                 ),
+
+
 
             PaymentMethod:
+
                 S(
+
                     row,
+
                     "PAYMENT_METHOD",
+
                     "PAYMENT_METHOD_LOOKUP_CODE",
+
                     "DEFAULT_PAYMENT_METHOD_CODE"
+
                 ),
+
+
 
             AddressLine1:
+
                 S(
+
                     row,
+
                     "ADDRESS_LINE1"
+
                 ),
+
+
 
             AddressLine2:
+
                 S(
+
                     row,
+
                     "ADDRESS_LINE2"
+
                 ),
+
+
 
             AddressLine3:
+
                 S(
+
                     row,
+
                     "ADDRESS_LINE3"
+
                 ),
+
+
 
             City:
+
                 S(
+
                     row,
+
                     "CITY"
+
                 ),
+
+
 
             State:
+
                 S(
+
                     row,
+
                     "STATE"
+
                 ),
+
+
 
             PostalCode:
+
                 S(
+
                     row,
+
                     "ZIP",
+
                     "POSTAL_CODE"
+
                 ),
+
+
 
             Country:
+
                 S(
+
                     row,
+
                     "COUNTRY"
+
                 )
+
         );
+
     }
 
+
+
     // ============================================================
+
     // PO / GRN MAPPER
+
     // ============================================================
+
+
 
     private static OraclePoGrnDto MapPoGrn(
+
         Dictionary<string, object?> row)
+
     {
+
         return new OraclePoGrnDto(
+
             PoHeaderId:
+
                 S(
+
                     row,
+
                     "PO_HEADER_ID"
+
                 ),
 
+
+
             PoNumber:
+
                 S(
+
                     row,
+
                     "PO_NUMBER"
+
                 ),
+
+
 
             PrNumber:
+
                 S(
+
                     row,
+
                     "PR_NUMBER"
+
                 ),
+
+
 
             PoType:
+
                 S(
+
                     row,
+
                     "PO_TYPE"
+
                 ),
+
+
 
             PoStatus:
+
                 S(
+
                     row,
+
                     "PO_STATUS"
+
                 ),
+
+
 
             InspectionStatus:
+
                 S(
+
                     row,
+
                     "QC_STATUS"
+
                 ),
+
+
 
             VendorId:
+
                 S(
+
                     row,
+
                     "VENDOR_ID"
+
                 ),
 
+
+
             VendorName:
+
                 S(
+
                     row,
+
                     "VENDOR_NAME"
+
                 ),
+
+
 
             VendorSiteCode:
+
                 S(
+
                     row,
+
                     "VENDOR_SITE_CODE"
+
                 ),
+
+
 
             PoLineId:
+
                 S(
+
                     row,
+
                     "PO_LINE_ID"
+
                 ),
+
+
 
             PoLineNum:
+
                 S(
+
                     row,
+
                     "PO_LINE_NUM"
+
                 ),
+
+
 
             ItemCode:
+
                 S(
+
                     row,
+
                     "ITEM_CODE"
+
                 ),
+
+
 
             ItemDescription:
+
                 S(
+
                     row,
+
                     "ITEM_DESCRIPTION"
+
                 ),
+
+
 
             Uom:
+
                 S(
+
                     row,
+
                     "UOM"
+
                 ),
+
+
 
             PoQuantity:
+
                 N(
+
                     row,
+
                     "PO_QUANTITY"
+
                 ),
+
+
 
             UnitPrice:
+
                 N(
+
                     row,
+
                     "UNIT_PRICE"
+
                 ),
+
+
 
             PoLineAmount:
+
                 N(
+
                     row,
+
                     "PO_LINE_AMOUNT"
+
                 ),
+
+
 
             OrderedQuantity:
+
                 N(
+
                     row,
+
                     "ORDERED_QUANTITY"
+
                 ),
+
+
 
             ReceivedQuantity:
+
                 N(
+
                     row,
+
                     "RECEIVED_QUANTITY"
+
                 ),
+
+
 
             BilledQuantity:
+
                 N(
+
                     row,
+
                     "BILLED_QUANTITY"
+
                 ),
+
+
 
             CancelledQuantity:
+
                 N(
+
                     row,
+
                     "CANCELLED_QUANTITY"
+
                 ),
+
+
 
             QuantityAvailableToInvoice:
+
                 N(
+
                     row,
+
                     "QUANTITY_AVAILABLE_TO_INVOICE"
+
                 ),
 
+
+
             GrnNumber:
+
                 S(
+
                     row,
+
                     "GRN_NUMBER"
+
                 ),
+
+
 
             RcvTransactionId:
+
                 S(
+
                     row,
+
                     "RCV_TRANSACTION_ID"
+
                 ),
+
+
 
             ShipmentLineId:
+
                 S(
+
                     row,
+
                     "SHIPMENT_LINE_ID"
+
                 ),
+
+
 
             ItemId:
+
                 S(
+
                     row,
+
                     "ITEM_ID"
+
                 ),
+
+
 
             GrnReceivedQuantity:
+
                 N(
+
                     row,
+
                     "GRN_RECEIVED_QUANTITY"
+
                 ),
 
+
+
             ReceiptDate:
+
                 D(
+
                     row,
+
                     "RECEIPT_DATE"
+
                 ),
+
+
 
             CurrencyCode:
+
                 S(
+
                     row,
+
                     "CURRENCY_CODE"
+
                 ),
+
+
 
             PoCreationDate:
+
                 D(
+
                     row,
+
                     "PO_CREATION_DATE"
+
                 ),
+
+
 
             PoApprovedDate:
+
                 D(
+
                     row,
+
                     "PO_APPROVED_DATE"
+
                 )
+
         );
+
     }
 
+
+
     // ============================================================
+
     // INVOICE MAPPER
+
     // ============================================================
+
+
 
     private static OracleInvoiceDto MapInvoice(
+
         Dictionary<string, object?> row)
+
     {
+
         return new OracleInvoiceDto(
+
             VendorId:
+
                 S(
+
                     row,
+
                     "VENDOR_ID"
+
                 ),
+
+
 
             SupplierNumber:
+
                 S(
+
                     row,
+
                     "SUPPLIER_NUMBER"
+
                 ),
+
+
 
             VendorName:
+
                 S(
+
                     row,
+
                     "VENDOR_NAME"
+
                 ),
+
+
 
             // IMPORTANT:
+
             // Actual numeric Oracle AP invoice ID.
+
             OracleInvoiceId:
+
                 S(
+
                     row,
+
                     "INVOICE_ID"
+
                 ),
+
+
 
             InvoiceNumber:
+
                 S(
+
                     row,
+
                     "INVOICE_NUM",
+
                     "INVOICE_NUMBER"
+
                 ),
+
+
 
             InvoiceDate:
+
                 D(
+
                     row,
+
                     "INVOICE_DATE"
+
                 ),
+
+
 
             InvoiceAmount:
+
                 N(
+
                     row,
+
                     "INVOICE_AMOUNT"
+
                 )
+
                 ??
+
                 0,
 
+
+
             AmountPaid:
+
                 N(
+
                     row,
+
                     "AMOUNT_PAID"
+
                 ),
+
+
 
             OutstandingAmount:
+
                 N(
+
                     row,
+
                     "OUTSTANDING_AMOUNT"
+
                 ),
+
+
 
             PaymentStatusFlag:
+
                 S(
+
                     row,
+
                     "PAYMENT_STATUS_FLAG"
+
                 ),
+
+
 
             PaymentStatus:
+
                 S(
+
                     row,
+
                     "PAYMENT_STATUS"
+
                 ),
+
+
 
             ApprovalStatus:
+
                 S(
+
                     row,
+
                     "APPROVAL_STATUS"
+
                 ),
+
+
 
             Remarks:
+
                 S(
+
                     row,
+
                     "REMARKS"
+
                 ),
+
+
 
             PoNumber:
+
                 S(
+
                     row,
+
                     "PO_NUMBER"
+
                 ),
+
+
 
             GrnNumber:
+
                 S(
+
                     row,
+
                     "GRN_NUMBER"
+
                 ),
 
+
+
             ReceiptDate:
+
                 D(
+
                     row,
+
                     "RECEIPT_DATE"
+
                 )
+
         );
+
     }
+
 }

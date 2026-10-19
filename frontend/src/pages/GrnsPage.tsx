@@ -1,3 +1,4 @@
+import { RecordsPagination, useRecordsPagination } from "../components/RecordsPagination";
 import {
   useEffect,
   useMemo,
@@ -416,6 +417,8 @@ export function GrnsPage() {
     );
   }
 
+  const recordsPaging = useRecordsPagination(filteredRows.length, [search, statusFilter, fromDate, toDate]);
+
   return (
     <div className="page-card">
       <div className="page-card-head vendor-table-head">
@@ -503,7 +506,7 @@ export function GrnsPage() {
         </thead>
 
         <tbody>
-          {filteredRows.map(
+          {filteredRows.slice(recordsPaging.start, recordsPaging.end).map(
             (
               row,
               index
@@ -571,6 +574,8 @@ export function GrnsPage() {
           )}
         </tbody>
       </table>
+      <RecordsPagination total={filteredRows.length} page={recordsPaging.page} pages={recordsPaging.pages} onPage={recordsPaging.setPage} noun="GRNs" />
+
     </div>
   );
 }

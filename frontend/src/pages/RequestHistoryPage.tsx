@@ -1,3 +1,4 @@
+import { RecordsPagination, useRecordsPagination } from "../components/RecordsPagination";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -6,11 +7,12 @@ import {
   getInvoiceDocuments,
   getInvoiceIssue,
   getMyPortalInvoices,
+  getMyOracleInvoices,
   getPortalInvoice,
   viewInvoiceDocument,
 } from "../api/portal";
 import { DataTableToolbar } from "../components/DataTableToolbar";
-import type { PortalInvoice } from "../types";
+import type { PortalInvoice, OracleInvoice } from "../types";
 import type { InvoiceDocumentDto } from "../api/portal";
 import { exportRowsToCsv } from "../utils/exportCsv";
 
@@ -174,6 +176,17 @@ function canDelete(row: PortalInvoice) {
 
 export function RequestHistoryPage() {
   const [rows, setRows] = useState<PortalInvoice[]>([]);
+  const [oraclePayments, setOraclePayments] = useState<OracleInvoice[]>([]);
+  const paymentByInvoice = useMemo(() => new Map(oraclePayments.map(x => [String(x.invoiceNumber || "").trim().toUpperCase(), x])), [oraclePayments]);
+  const paymentStatusFor = (row: PortalInvoice) => {
+    const invoiceNumber = String(row.invoiceNumber || "").trim().toUpperCase();
+    const match = invoiceNumber ? paymentByInvoice.get(invoiceNumber) : undefined;
+    const flag = String(match?.paymentStatusFlag || "").toUpperCase();
+    if (flag === "Y") return "PAID";
+    if (flag === "P") return "PARTIALLY PAID";
+    if (flag === "N") return "UNPAID";
+    return "-";
+  };
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
 
@@ -216,10 +229,11 @@ export function RequestHistoryPage() {
 
     const refreshRows = async () => {
       try {
-        const data = await getMyPortalInvoices();
+        const [data, payments] = await Promise.all([getMyPortalInvoices(), getMyOracleInvoices().catch(() => [] as OracleInvoice[])]);
 
         if (active) {
           setRows(data);
+          setOraclePayments(payments);
         }
       } catch (error) {
         console.error(
@@ -291,6 +305,8 @@ export function RequestHistoryPage() {
     });
   }, [rows, search, statusFilter]);
 
+  const recordsPaging = useRecordsPagination(filteredRows.length, [search, statusFilter]);
+
   function exportCurrentRows() {
     exportRowsToCsv(
       "invoice-history.csv",
@@ -300,6 +316,7 @@ export function RequestHistoryPage() {
         "PO",
         "Amount",
         "Status",
+        "Payment Status",
         "Description",
         "Remarks",
         "GRNs",
@@ -311,6 +328,7 @@ export function RequestHistoryPage() {
         row.poNumber || "-",
         Number(row.invoiceAmount || 0),
         presentInvoice(row).status,
+        paymentStatusFor(row),
         row.description || "-",
         row.remarks || "-",
         row.grnNumbers?.join(", ") || "-",
@@ -505,6 +523,7 @@ export function RequestHistoryPage() {
             <th>PO</th>
             <th>Amount</th>
             <th>Status</th>
+            <th>Payment Status</th>
             <th>Description</th>
             <th>Remarks</th>
             <th>GRNs</th>
@@ -513,7 +532,7 @@ export function RequestHistoryPage() {
         </thead>
 
         <tbody>
-          {filteredRows.map((row) => (
+          {filteredRows.slice(recordsPaging.start, recordsPaging.end).map((row) => (
             <tr
               key={row.id}
               className="invoice-history-row"
@@ -550,6 +569,7 @@ export function RequestHistoryPage() {
                 </span>
               </td>
 
+              <td><span className={`status ${paymentStatusFor(row) === "PAID" ? "green" : paymentStatusFor(row) === "PARTIALLY PAID" ? "orange" : "blue"}`}>{paymentStatusFor(row)}</span></td>
               <td className="invoice-history-description">
                 {row.description || "-"}
               </td>
@@ -615,7 +635,7 @@ export function RequestHistoryPage() {
           {!filteredRows.length && (
             <tr>
               <td
-                colSpan={9}
+                colSpan={10}
                 className="empty"
               >
                 {rows.length
@@ -626,6 +646,8 @@ export function RequestHistoryPage() {
           )}
         </tbody>
       </table>
+
+      <RecordsPagination total={filteredRows.length} page={recordsPaging.page} pages={recordsPaging.pages} onPage={recordsPaging.setPage} noun="invoices" />
 
       {detailInvoice && (
         <div
@@ -733,6 +755,45 @@ export function RequestHistoryPage() {
                     <span>Finance Remarks</span>
                     <strong>{detailInvoice.remarks || "-"}</strong>
                   </div>
+                </div>
+
+                <div className="invoice-detail-documents">
+                  <div className="invoice-detail-section-title">
+                    <h4>Submitted PO Lines</h4>
+                    <span>{detailInvoice.submittedLines?.length ?? 0} lines</span>
+                  </div>
+                  {detailInvoice.submittedLines?.length ? (
+                    <div style={{ overflowX: "auto" }}>
+                      <table className="data-table" style={{ width: "100%" }}>
+                        <thead>
+                          <tr>
+                            <th>PO Number</th>
+                            <th>GRN Number</th>
+                            <th>PO Line</th>
+                            <th>Item Description</th>
+                            <th>Submitted Qty</th>
+                            <th>Unit Price</th>
+                            <th>Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detailInvoice.submittedLines.map((line, index) => (
+                            <tr key={`${line.poNumber}-${line.grnNumber}-${line.poLineNumber}-${index}`}>
+                              <td>{line.poNumber}</td>
+                              <td>{line.grnNumber}</td>
+                              <td>{line.poLineNumber}</td>
+                              <td>{line.itemDescription || "-"}</td>
+                              <td>{Number(line.submittedQuantity).toLocaleString()}</td>
+                              <td>{Number(line.unitPrice).toLocaleString()}</td>
+                              <td>{Number(line.amount).toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p>No submitted PO line allocations found for this invoice.</p>
+                  )}
                 </div>
 
                 <div className="invoice-detail-documents">
